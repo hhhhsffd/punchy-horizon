@@ -1,5 +1,47 @@
 # Validation scope
 
+## 0.2.0 work in progress
+
+Implementation is not complete. The user authorized testing and publication on
+2026-11-15, lifting the earlier testing hold. Compatibility pins are targets,
+not a completed runtime claim.
+
+### Current test pass — 2026-11-15
+
+- `cargo test --locked`: 147 unit tests passed.
+- With `PUNCHY_MOVES_PACK_ROOT` pointing to the separately installed Fluid &
+  Foolish 1.0.1 pack, the integration test passed and loaded all 268 clips.
+- `cargo clippy --locked --all-targets -- -D warnings`: clean.
+- Bundle validation through the pinned Horizon `Bundle::read`: passed, 85 files.
+- Python smoke/build/package scripts compile; `git diff --check` passed.
+- Fixed idle swimming's zero-sign handling exposed by the test suite.
+
+The combined pinned-Horizon/Spatial GUI check is being performed separately.
+These engine and packaging results alone do not prove a working game build or
+original-mod visual parity.
+
+Earlier in this fork's development, before the current facial/movement pass:
+
+- 123 engine tests and an external Fluid & Foolish pack test passed.
+- Engine Clippy completed without warnings.
+- A previous combined Punchy/Spatial GUI stage applied 73 injections and
+  17 support modules. This was not a completed game compile or runtime result.
+
+The earlier results alone did **not** validate the current source. The facial observer,
+per-frame skin lifecycle/emission hooks, accepted-use/attack capture, shallow
+water latching, semantic face channels, camera handoff and new support modules
+have since changed. Source inspection and formatting are not substitutes for
+compilation or in-game comparison. The current unit regression tests have now
+run; the full runtime smoke script still requires a current combined executable.
+
+Remaining validation after implementation: current engine tests/Clippy, pinned
+mixin plan/application, bundle parsing, full combined game compilation, and
+isolated runtime/visual comparisons including facial skin restoration,
+resource reloads, remote metadata, action sequencing and Spatial GUI handoffs.
+
+The versioned records below describe upstream validation, not this fork's
+current implementation.
+
 ## 0.1.8 — Live HUD Editor, settings overhaul, and launcher build fixes
 
 Validated on 2026-11-08 with Horizon Nightly `66f3981` and mixins `5a64af93`,

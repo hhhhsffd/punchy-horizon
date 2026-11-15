@@ -1,8 +1,13 @@
-# Punchy Horizon
+# Punchy + Moves for Horizon (Rust fork)
 
 A native animation mod for [Horizon](https://github.com/horizon-rust/horizon)
 (Minecraft Java 26.3 in Rust), bringing Punchy-style first-person hand and item
 animations to the client.
+
+This fork adds a data-driven third-person Moves implementation in Rust.
+It is **not yet a complete, verified conversion of every original PunchyMoves
+feature**; see [PORTING_STATUS.md](https://github.com/hhhhsffd/punchy-horizon/blob/main/PORTING_STATUS.md). No Java code, JAR, JVM,
+Fabric, or bundled Fluid & Foolish assets are used by the new integration.
 
 ## Features
 
@@ -14,15 +19,33 @@ animations to the client.
 - **Adjustable viewmodel**: separate arm and item position (X/Y/Z) and scale.
 - **Punchy! Moves third-person shoulder camera**: over-the-shoulder dynamic camera with obstacle ray clipping, configurable distance, height, shoulder horizontal offset, and FOV.
 - **In-Game Live HUD Editor (F9)**: real-time on-screen editor overlay rendered directly in your world. Adjust camera and arm viewmodels live while seeing your character move!
-- **Free/orbit camera mode (F8)**: smoothly orbit the camera around the player character without turning the player model.
+- **Free/orbit camera mode (F4)**: orbit without turning the player, only during third-person gameplay.
 - **Stationary turn-in-place easing**: body yaw smoothing and 50-degree head rotation constraint matching Punchy! Moves locomotion.
 - **Self-contained resources**: 223 bundled clips, geometry and tuning; no separate Punchy JAR or Fabric install.
+- **External Moves packs**: reads `assets/punchy_moves/animations/**/*.json`
+  and `compat/**/*.json` from Horizon's selected/resolved resource packs.
+- **Moves master switch**: disable Moves without losing first-person Punchy;
+  separate switches for body animations, shoulder camera, and dynamic framing.
+- **Pack-driven poses**: directional walking/crawling, sprint overlays, jump/fall,
+  swimming, elytra, climbing, riding, item actions, emotes, and contextual camera presets.
+- **In-game facial animation (work in progress)**: per-player animated skin aliases,
+  blink/gaze/reaction channels, external clip face channels, and an emissive face
+  pass. Original skin pixels remain untouched; remote skins with embedded facial
+  metadata retain their owner's style. Exact visual parity is not established.
+- **Spatial GUI coexistence**: leaves menu camera/FOV and pointer mapping alone,
+  releases body poses in menus, preserves other emote owners, and avoids F6–F8.
 
-Settings: **Options > Mods > Punchy Rust**. Hand poses default to **Punchy**.
-- **F6**: inspect held item
-- **F7**: reload bundled animations and configuration
-- **F8**: toggle Punchy! Moves free/orbit camera mode
+Settings: **Options > Mods > Punchy + Moves**. Hand poses default to **Punchy**.
+- **F10**: inspect held item
+- **F12**: reload animations and external Moves resources
+- **F4**: toggle Moves free/orbit camera mode
 - **F9**: toggle In-Game Live HUD Editor
+- **V**: toggle the shoulder camera and switch perspective
+- **M / N**: select next / play selected external Moves emote
+
+The custom emote wheel is intentionally out of scope. Bindings are exposed on
+the native mod's settings page. Rebind any old
+F6/F7 assignments inherited from an earlier installation to avoid Spatial GUI.
 
 ## In-Game Live HUD Editor (F9)
 
@@ -36,25 +59,48 @@ Press **F9** while playing in any world or server to bring up the live interacti
 
 ## Overhauled Settings Menu
 
-Open **Options > Mods > Punchy Rust > Settings** to view and configure all settings with full visibility:
+Open **Options > Mods > Punchy + Moves > Settings** to view and configure all settings with full visibility:
 - **Dedicated `[-]` / `[+]` stepping buttons**: every parameter shows its name, exact current value, and step delta (e.g. `[-] Horizontal: +1.17 blk (-0.10)` / `[+] Horizontal: +1.17 blk (+0.10)`).
 - **Active Section switcher**: click to cycle between **Moves 3rd-Person Camera**, **Arms Viewmodel**, and **Held Items Viewmodel**. All 4 parameters for the active section are displayed simultaneously.
 - **Reset buttons**: reset individual sections or all mod settings to defaults with one click.
 - **Master toggles**: easily toggle preview, in-game live HUD editor, shoulder camera, free orbit mode, and hand pose styles.
+- **Right-click numbers** to decrease (on either `[-]` or `[+]`); right-click
+  speed, section, or emote selection to cycle backwards. Toggles work in either
+  direction. Right-click empty space or the footer to go back. Destructive
+  reset/reload/play actions are not activated by right-click. Key capture still
+  accepts right mouse bindings. Values save through Horizon's native settings.
 
 ## Installation
 
-1. Download the `.hnmod` file from [Releases](https://github.com/MoonFvv/punchy-horizon/releases/latest).
+The current 0.2.0 source is unfinished. Existing files in `dist/` may predate the
+facial/runtime changes; no ready-to-use game build is claimed yet. Engine tests
+and bundle parsing pass; combined-game/runtime validation is tracked separately
+in VALIDATION.md.
+
+Once a validated 0.2.0 bundle is available:
+
+1. Use `dist/punchy-rust-preview-0.2.0.hnmod` from this fork.
 2. Add it to your Horizon instance's native mods and enable Punchy.
 3. Build the game with native mods in the launcher, then launch it.
+4. Download [Fluid & Foolish 1.0.1](https://modrinth.com/resourcepack/fluid-foolish)
+   yourself, put the ZIP in the instance's `resourcepacks` folder, and enable it
+   in **Options > Resource Packs**. Normal pack reloads refresh Moves automatically.
+   The mod never downloads, embeds, or enables this pack for you.
+
+Without the external pack, first-person Punchy and the shoulder camera still
+work; Moves animations have no external clips and show a missing-pack message.
 
 Horizon still prepares its own Minecraft resources from your Minecraft installation.
 Native mods run with the same access as the game.
 
 ## Compatibility and development
 
-Updated for Horizon **Nightly 2026-11-05** (`66f3981`). Pinned to Horizon `66f3981f522b24c250b21523a70080965b940424` and
-horizon-mixins `5a64af938ec86b00d53d16a408aabc0038fb3e57`.
+Targets **`nightly-2026-11-13-9f42064`**, the latest published game nightly
+checked on 2026-11-15, Minecraft 26.3. Horizon main has newer, unpublished
+commits; “latest” here means the launcher's published game, not main.
+Pins: Horizon `9f42064c11efe7ef3e5ed2baad7ddc2a3b36eea0`,
+mixins `e59da9094f0c2fdda6c627fe9eff22dec6a906f0`.
+Spatial GUI reference: **0.2.3** on the same pins.
 
 ```sh
 cargo test --locked
@@ -62,8 +108,8 @@ cargo clippy --locked --all-targets -- -D warnings
 ```
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for packaging and [VALIDATION.md](VALIDATION.md)
-for test coverage. Full locomotion, physics, special renderers and the original
-editor are not implemented; this is not complete parity with original Punchy.
+for checks actually performed. Neither compiling nor reading all clips proves
+full original-mod behavioral or visual parity.
 
 ## Credits and license
 

@@ -3,16 +3,20 @@
 ## Compatibility
 
 - Minecraft: **26.3**.
-- Bundle: **0.1.8** (In-Game Live HUD Editor F9, overhauled settings, Punchy! Moves shoulder camera, free/orbit camera mode, turn easing).
-- Horizon Nightly 2026-11-05: `66f3981f522b24c250b21523a70080965b940424`.
-- horizon-mixins: `5a64af938ec86b00d53d16a408aabc0038fb3e57`.
+- Bundle: **0.2.0**; see PORTING_STATUS.md for incomplete original parity.
+- Latest published Horizon nightly checked 2026-11-15: `9f42064c11efe7ef3e5ed2baad7ddc2a3b36eea0`.
+- horizon-mixins: `e59da9094f0c2fdda6c627fe9eff22dec6a906f0`.
 
 Other revisions require validation. This native mod runs with the same account
 permissions as Horizon; review its source before building it.
 
 ## Develop and package
 
-Rust and Python 3.9+ are needed for development. Engine tests use bundled data
+The current implementation is unfinished. Testing resumed at the user's request
+on 2026-11-15. See VALIDATION.md for results; engine tests do not establish a
+working combined game or full visual parity.
+
+Rust and Python 3.11+ are needed for development. Engine tests use bundled data
 and checked-in numerical fixtures; no original JAR or decompiler is needed.
 
 ```sh
@@ -26,8 +30,8 @@ To build a bundle, check out the pinned Horizon source and run:
 
 ```sh
 git clone https://github.com/horizon-rust/horizon.git horizon-source
-git -C horizon-source checkout 66f3981f522b24c250b21523a70080965b940424
-python3 tools/package.py --horizon-source horizon-source
+git -C horizon-source checkout 9f42064c11efe7ef3e5ed2baad7ddc2a3b36eea0
+python3 tools/package.py --horizon-source horizon-source --validate
 ```
 
 The tool validates the exact `.hnmod` with Horizon's actual Bundle::read parser.
@@ -35,11 +39,19 @@ Output is in `dist/`. Add `--offline` to use cached Cargo dependencies.
 The original license notices are included with the bundle. Source exports with
 Horizon's `.horizon-revision` marker are accepted too.
 
-The mixin application and game compilation must also pass: parser validation alone
-does not check private gameplay APIs or rendering signatures. Unpack the bundle,
-then use the pinned horizon-mixins CLI to apply its `mixins/` directory to a fresh
-export of the pinned Horizon source. Build `horizon-client` and the
-`horizon-client-lib` binary `horizon-ctl` from that generated stage.
+Build the current official client together with Spatial GUI with the pinned
+horizon-mixins executable (shown as `horizon-mixins` below):
+
+```sh
+python3 tools/build.py check --horizon-source horizon-source --mixins /path/to/horizon-mixins --spatial-gui ../spatialgui
+python3 tools/build.py build --horizon-source horizon-source --mixins /path/to/horizon-mixins --spatial-gui ../spatialgui
+```
+
+Omit `--spatial-gui` to build Punchy alone. The output stage is under `.build/`;
+the original Horizon and Spatial GUI checkouts are preserved. The executable is
+`horizon-official` in the Cargo target's `fast/` directory. Set `--target-dir`
+to reuse a Cargo build cache. Rust/Cargo must be on PATH; Windows GNU builds also
+need their toolchain's self-contained runtime libraries on `LIBRARY_PATH`.
 
 `tools/runtime_smoke.py` can exercise a compiled native game with `--binary`,
 `--ctl`, `--resources` and `--report`. It creates fresh temporary homes and a
@@ -51,3 +63,9 @@ buttons, verify independent arm/item matrices, restart the game to check
 persistence, and test both reset actions. It uses the same scratch game directory
 for that restart. Numeric defaults, input validation, bounds and transform order
 are also covered by engine tests in `viewmodel.rs`.
+
+`tools/moves_smoke.py` additionally exercises an enabled external pack, body
+poses, shoulder/orbit camera, facial skin upload/restoration, Spatial GUI camera
+handoff, right-click controls, back navigation, and the Moves switch.
+Pass `--binary`, `--ctl`, `--resources`, `--pack` (an unpacked external pack),
+and `--report`. It also uses only a new temporary game folder.

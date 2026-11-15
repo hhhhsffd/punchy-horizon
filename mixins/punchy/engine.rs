@@ -334,6 +334,64 @@ pub struct Clip {
     pub sounds: Vec<(f32, BTreeSet<String>)>,
 }
 impl Clip {
+    /// Bedrock channels without the first-person port's legacy axis remapping.
+    /// Moves resource packs use ordinary player-model coordinates.
+    pub fn sample_model(&self, bone: &str, time: f32) -> Pose {
+        self.sample_model_at(bone, time, self.looped)
+    }
+    pub fn sample_model_once(&self, bone: &str, time: f32) -> Pose {
+        self.sample_model_at(bone, time, false)
+    }
+    fn sample_model_at(&self, bone: &str, time: f32, looped: bool) -> Pose {
+        let time = if looped && self.length > 0. {
+            time.rem_euclid(self.length)
+        } else {
+            time.clamp(0., self.length.max(0.))
+        };
+        let sample = |name: &str| {
+            let Some(track) = self.tracks.get(name) else {
+                return Pose::default();
+            };
+            let loop_length = if looped { self.length } else { 0. };
+            let position = sample_model_channel(&track.position, time, loop_length, Vec3::ZERO);
+            let euler = sample_model_channel(&track.rotation, time, loop_length, Vec3::ZERO);
+            let scale = sample_model_channel(&track.scale, time, loop_length, Vec3::ONE);
+            let rotation = Quat::from_euler(
+                EulerRot::ZYX,
+                euler.z.to_radians(),
+                euler.y.to_radians(),
+                euler.x.to_radians(),
+            );
+            Pose {
+                position: position * Vec3::new(1., -1., 1.),
+                euler,
+                rotation,
+                scale,
+            }
+        };
+        let mut child = sample(bone);
+        if bone == "root" && self.name == "idle" {
+            let pivot = Vec3::new(0., 12., 0.);
+            child.position += pivot - child.rotation * (pivot * child.scale);
+        } else if matches!(bone, "body" | "head" | "right_arm" | "left_arm")
+            && self.tracks.contains_key("waist")
+        {
+            let parent = sample("waist");
+            let pivot = match bone {
+                "right_arm" => Vec3::new(-5., 2., 0.),
+                "left_arm" => Vec3::new(5., 2., 0.),
+                _ => Vec3::ZERO,
+            };
+            child.position = parent.rotation * (pivot * parent.scale) - pivot
+                + parent.rotation * (child.position * parent.scale)
+                + parent.position;
+            child.rotation = parent.rotation * child.rotation;
+            child.scale *= parent.scale;
+            let (z, y, x) = child.rotation.to_euler(EulerRot::ZYX);
+            child.euler = Vec3::new(x, y, z) * 180. / std::f32::consts::PI;
+        }
+        child
+    }
     pub fn local_time(&self, time: f32) -> f32 {
         if self.looped && self.length > 0.0 {
             time.rem_euclid(self.length)
@@ -462,6 +520,56 @@ impl Clip {
         merge_timed(&mut result.timeline, &overlay.timeline);
         merge_timed(&mut result.sounds, &overlay.sounds);
         result
+    }
+}
+fn sample_model_channel(keys: &[Keyframe], time: f32, loop_length: f32, fallback: Vec3) -> Vec3 {
+    if keys.is_empty() {
+        return fallback;
+    }
+    let before = keys.iter().rposition(|k| k.time <= time);
+    let after = keys.iter().position(|k| k.time >= time);
+    let (Some(i), Some(j)) = (before, after) else {
+        return if let Some(i) = before {
+            keys[i].post.sample(time)
+        } else {
+            keys[after.unwrap()].pre.sample(time)
+        };
+    };
+    if i == j {
+        return keys[i].post.sample(time);
+    }
+    let a = &keys[i];
+    let b = &keys[j];
+    let progress = ((time - a.time) / (b.time - a.time)).clamp(0., 1.);
+    let t = b
+        .easing
+        .map_or(progress, |e| ease(e, f64::from(progress)) as f32);
+    let from = a.post.sample(time);
+    let to = b.pre.sample(time);
+    if a.interpolation == "catmullrom" || b.interpolation == "catmullrom" {
+        let previous = if i > 0 {
+            i - 1
+        } else if loop_length > 0. {
+            keys.iter().rposition(|k| k.time < loop_length).unwrap_or(i)
+        } else {
+            i
+        };
+        let next = if j + 1 < keys.len() {
+            j + 1
+        } else if loop_length > 0. && keys.len() > 2 {
+            1
+        } else {
+            j
+        };
+        catmull(
+            keys[previous].post.sample(time),
+            from,
+            to,
+            keys[next].pre.sample(time),
+            t,
+        )
+    } else {
+        from.lerp(to, t)
     }
 }
 fn quat_xyz(e: Vec3) -> Quat {
@@ -936,6 +1044,66 @@ pub fn load_clips(bytes: &[u8]) -> Result<BTreeMap<String, Clip>, String> {
                     }
                 }
                 clip.tracks.insert(bone.clone(), track);
+            }
+        }
+        out.insert(name.clone(), clip);
+    }
+    Ok(out)
+}
+
+/// Moves has independent per-channel interpolation, positive inferred clip
+/// lengths and virtual face tracks. Do not apply the first-person loader's
+/// legacy shared annotation behavior to this format.
+pub fn load_model_clips(bytes: &[u8]) -> Result<BTreeMap<String, Clip>, String> {
+    let value: Value = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+    let mut out = BTreeMap::new();
+    for (name, data) in value["animations"].as_object().into_iter().flatten() {
+        let mut clips = load_clips(
+            &serde_json::to_vec(&serde_json::json!({"animations":{name:data}}))
+                .map_err(|e| e.to_string())?,
+        )?;
+        let Some(mut clip) = clips.remove(name) else {
+            continue;
+        };
+        clip.tracks.clear();
+        for (name, bone) in data["bones"].as_object().into_iter().flatten() {
+            let track = BoneTrack {
+                position: parse_channel(bone.get("position"), 0.)?,
+                rotation: parse_channel(bone.get("rotation"), 0.)?,
+                scale: parse_channel(bone.get("scale"), 1.)?,
+            };
+            clip.tracks.insert(name.to_ascii_lowercase(), track);
+        }
+        if clip.length <= 0. || !clip.length.is_finite() {
+            clip.length = clip
+                .tracks
+                .values()
+                .flat_map(|t| {
+                    t.position
+                        .iter()
+                        .chain(t.rotation.iter())
+                        .chain(t.scale.iter())
+                })
+                .map(|k| k.time)
+                .fold(0.0001, f32::max);
+        }
+        if let Some(face) = data.get("face") {
+            let look = face.as_str().or_else(|| face["look"].as_str());
+            if let Some(look) = look.filter(|s| !s.trim().is_empty()) {
+                let mix = face["mix"].as_f64().filter(|v| v.is_finite()).unwrap_or(1.);
+                for (bone, y) in [
+                    ("face_mix".into(), mix),
+                    (
+                        format!("face_look_{}", look.trim().to_lowercase().replace(' ', "_")),
+                        1.,
+                    ),
+                ] {
+                    clip.tracks.entry(bone).or_insert(BoneTrack {
+                        position: parse_channel(Some(&serde_json::json!([0., y, 0.])), 0.)?,
+                        rotation: vec![],
+                        scale: vec![],
+                    });
+                }
             }
         }
         out.insert(name.clone(), clip);
@@ -1420,3 +1588,10 @@ pub mod viewmodel;
 
 /// Punchy! Moves — dynamic third-person camera, orbit/free camera, and locomotion.
 pub mod moves;
+pub mod moves_animation;
+pub mod moves_camera;
+pub mod moves_dynamics;
+pub mod moves_expression;
+pub mod moves_expressions;
+pub mod moves_pack;
+pub mod moves_render;

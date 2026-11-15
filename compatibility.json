@@ -1,0 +1,9 @@
+{
+  "game": "26.3",
+  "horizon_version": "nightly-2026-11-13-9f42064",
+  "horizon_revision": "9f42064c11efe7ef3e5ed2baad7ddc2a3b36eea0",
+  "horizon_mixins_revision": "e59da9094f0c2fdda6c627fe9eff22dec6a906f0",
+  "spatial_gui": "0.2.3",
+  "fluid_foolish": "1.0.1",
+  "checked_at": "2026-11-15"
+}

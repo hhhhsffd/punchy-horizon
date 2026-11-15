@@ -1,6 +1,6 @@
 //! Punchy! Moves — third-person dynamic shoulder camera, orbit/free camera,
 //! stationary turn easing, and third-person locomotion/pose animation.
-use glam::{Mat4, Quat, Vec3};
+use glam::{Mat4, Quat, Vec3, Vec4};
 
 /// Configurable camera parameters for the shoulder camera.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -261,12 +261,19 @@ impl ShoulderCamera {
         mut clip_test: F,
     ) -> Vec3 {
         let desired = self.desired_position(pivot, forward, right, up);
+        let travel = desired - pivot;
+        let distance = travel.length();
+        if !distance.is_finite() || distance < 1e-4 {
+            return pivot;
+        }
         if let Some(hit) = clip_test(pivot, desired) {
-            // Pull in from obstacle with small safety buffer
-            let dir = (desired - pivot).normalize();
-            let hit_dist = hit.distance(pivot);
-            let safe_dist = (hit_dist - 0.1).max(0.2);
-            pivot + dir * safe_dist
+            // Never push through a nearby wall to enforce a minimum distance.
+            let fraction = (hit - pivot).dot(travel) / travel.length_squared();
+            if !fraction.is_finite() {
+                return pivot;
+            }
+            let safety = (0.08 / distance).min(0.08);
+            pivot + travel * (fraction - safety).clamp(0.0, 1.0)
         } else {
             desired
         }
@@ -275,16 +282,28 @@ impl ShoulderCamera {
 
 /// Unproject center-of-screen ray for crosshair targeting in third person.
 pub fn unproject_center_ray(view: Mat4, projection: Mat4) -> Option<(Vec3, Vec3)> {
-    let inv = (projection * view).inverse();
-    let p_near = inv.project_point3(Vec3::new(0.0, 0.0, -1.0));
-    let p_far = inv.project_point3(Vec3::new(0.0, 0.0, 1.0));
-    if p_near.is_finite() && p_far.is_finite() {
-        let dir = (p_far - p_near).normalize();
-        if dir.is_finite() {
-            return Some((p_near, dir));
-        }
+    let combined = projection * view;
+    if !combined.is_finite() || combined.determinant().abs() < 1e-12 {
+        return None;
     }
-    None
+    let inv = combined.inverse();
+    // Recover the optical origin, not the near clipping plane. This also
+    // follows projection-space hurt/bob/portal transforms in the displayed frame.
+    let optical = inv * Vec4::new(0., 0., 1., 0.);
+    let inside = inv * Vec4::new(0., 0., 0.5, 1.);
+    if !optical.is_finite()
+        || !inside.is_finite()
+        || optical.w.abs() < 1e-7
+        || inside.w.abs() < 1e-7
+    {
+        return None;
+    }
+    let origin = optical.truncate() / optical.w;
+    let delta = inside.truncate() / inside.w - origin;
+    if !origin.is_finite() || !delta.is_finite() || delta.length_squared() < 1e-12 {
+        return None;
+    }
+    Some((origin, delta.normalize()))
 }
 
 /// Locomotion action state for third-person player animations.
@@ -507,6 +526,10 @@ impl MovesLocomotion {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::field_reassign_with_default,
+    reason = "Tests evolve observation fixtures across several ticks"
+)]
 mod tests {
     use super::*;
 

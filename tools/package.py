@@ -5,44 +5,57 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
+import tomllib
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-PIN = '66f3981f522b24c250b21523a70080965b940424'
-MIXINS = '5a64af938ec86b00d53d16a408aabc0038fb3e57'
-VERSION = '0.1.8'
-ENGINE = ('engine.rs', 'resources.rs', 'actions.rs', 'tuning.rs',
-          'horizon_pose.rs', 'skeleton.rs', 'attachments.rs', 'playback.rs',
-          'phases.rs', 'policy.rs', 'player.rs', 'viewmodel.rs', 'moves.rs')
+COMPAT = json.loads((ROOT / "compatibility.json").read_text())
+PIN = COMPAT["horizon_revision"]
+MIXINS = COMPAT["horizon_mixins_revision"]
+VERSION = tomllib.loads((ROOT / "mixins/punchy/horizon-mixin.toml").read_text())["mod"]["version"]
+def engine_files():
+    """Follow out-of-line engine modules, including newly ported submodules."""
+    source = ROOT / "mixins/punchy"
+    found = set()
+    pending = ["engine.rs"]
+    while pending:
+        name = pending.pop()
+        if name in found:
+            continue
+        path = source / name
+        if not path.is_file():
+            raise SystemExit("Missing engine module: " + name)
+        found.add(name)
+        for module in re.finditer(
+            r'(?m)^(?:#\[path\s*=\s*"([^"]+)"\]\s*)?(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_]\w*)\s*;',
+            path.read_text(),
+        ):
+            pending.append((Path(name).parent / (module.group(1) or module.group(2) + ".rs")).as_posix())
+    return tuple(sorted(found))
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--horizon-source', type=Path, required=True,
+    parser.add_argument('--horizon-source', type=Path,
                         help='Horizon source checked out at the tested commit')
     parser.add_argument('--offline', action='store_true')
+    parser.add_argument('--validate', action='store_true', help='Validate with Horizon Bundle::read')
     args = parser.parse_args()
-    horizon = args.horizon_source.resolve()
-    revision_file = horizon / '.horizon-revision'
-    revision = (revision_file.read_text().strip() if revision_file.is_file() else
-                subprocess.check_output(
-                    ['git', '-C', str(horizon), 'rev-parse', 'HEAD'], text=True).strip())
-    if revision != PIN:
-        parser.error('Horizon checkout must be at ' + PIN)
-    dependency = horizon / 'crates/horizon-mods'
-    if not (dependency / 'Cargo.toml').is_file():
-        parser.error('Missing horizon-mods crate')
+    if args.validate and not args.horizon_source:
+        parser.error('--validate requires --horizon-source')
     source = ROOT / 'mixins/punchy'
+    engine = engine_files()
     manifest = {'schema': 1, 'id': 'punchy', 'version': VERSION,
                 'game': '26.3', 'horizon': PIN, 'mixins': MIXINS}
     files = {'horizon-native.json': (json.dumps(manifest, indent=2) + '\n').encode()}
     prefix = 'mixins/punchy/'
     for path in sorted(source.iterdir()):
-        if path.is_file() and path.suffix in ('.rs', '.toml') and path.name not in ENGINE:
+        if path.is_file() and path.suffix in ('.rs', '.toml') and path.name not in engine:
             files[prefix + path.name] = path.read_bytes()
-    for name in ENGINE:
+    for name in engine:
         files[prefix + 'engine/' + name] = (source / name).read_bytes()
     files[prefix + 'engine/Cargo.toml'] = b'''[package]
 name = "punchy-engine"
@@ -70,25 +83,27 @@ zip = { version = "9.1.3", default-features = false, features = ["deflate"] }
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o100644 << 16
             archive.writestr(info, data)
-    validator = ROOT / '.build/validator'
-    (validator / 'src').mkdir(parents=True, exist_ok=True)
-    (validator / 'Cargo.toml').write_text('''[package]
+    if args.validate:
+        horizon = args.horizon_source.resolve()
+        dependency = horizon / 'crates/horizon-mods'
+        validator = ROOT / '.build/validator'
+        (validator / 'src').mkdir(parents=True, exist_ok=True)
+        (validator / 'Cargo.toml').write_text('''[package]
 name = "punchy-package-validator"
 version = "0.1.0"
 edition = "2024"
 publish = false
 [dependencies]
-horizon-mods = { path = ''' + json.dumps(str(dependency)) + ''', features = ["index"] }
-''')
-    shutil.copyfile(ROOT / 'tools/validator-src/main.rs', validator / 'src/main.rs')
-    shutil.copyfile(ROOT / 'tools/validator-Cargo.lock', validator / 'Cargo.lock')
-    command = ['cargo', 'run', '--manifest-path', str(validator / 'Cargo.toml'), '--locked']
-    if args.offline:
-        command.append('--offline')
-    command += ['--', str(output)]
-    subprocess.run(command, check=True, env=dict(os.environ))
+horizon-mods = { path = ''' + json.dumps(str(dependency)) + ''', features = ["index"] }\n''')
+        shutil.copyfile(ROOT / 'tools/validator-src/main.rs', validator / 'src/main.rs')
+        command = ['cargo', 'run', '--manifest-path', str(validator / 'Cargo.toml')]
+        if args.offline:
+            command.append('--offline')
+        subprocess.run(command + ['--', str(output)], check=True, env=dict(os.environ))
+    digest = hashlib.sha256(output.read_bytes()).hexdigest()
+    output.with_suffix(".hnmod.sha256").write_text(f"{digest}  {output.name}\n")
     print(json.dumps({'file': output.name, 'sha256': hashlib.sha256(output.read_bytes()).hexdigest(),
-                      'files': len(files), 'validation': 'pinned Horizon Bundle::read passed'}, indent=2))
+                      'files': len(files), 'parser_validated': args.validate}, indent=2))
 
 
 if __name__ == '__main__':
