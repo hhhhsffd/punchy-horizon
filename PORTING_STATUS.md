@@ -36,8 +36,9 @@ retained; Fluid & Foolish remains an external, user-installed resource pack.
   backwards right-click adjustments and back navigation. No custom emote wheel.
 - Spatial GUI menu/pointer/camera ownership guards; no F6–F8 default conflicts.
 
-These are implementation paths, **not current build/runtime validation claims**.
-See VALIDATION.md for the current test results and earlier baseline.
+The pinned Windows GNU combined build, engine/pack tests and both isolated
+runtime smoke suites pass. This validates the tested paths, **not complete
+original-mod parity**. See VALIDATION.md for exact scope and earlier baseline.
 
 ## Remaining implementation/parity boundaries
 
@@ -55,7 +56,8 @@ See VALIDATION.md for the current test results and earlier baseline.
   hooks are deliberately not registered: changing only block selection and
   pick-block would disagree with Horizon's separate attack/use entity queries.
   Gameplay still uses Horizon's player-eye aim and reach.
-- Full current combined compilation and in-game behavioral/visual comparison.
+- Detailed in-game behavioral/visual comparison against the original, beyond
+  the automated smoke scenarios.
 
 Testing resumed on 2026-11-15 at the user's request; remaining checks are recorded
 in VALIDATION.md.

@@ -2,9 +2,9 @@
 
 ## 0.2.0 work in progress
 
-Implementation is not complete. The user authorized testing and publication on
-2026-11-15, lifting the earlier testing hold. Compatibility pins are targets,
-not a completed runtime claim.
+Full original-mod parity is not complete. The user authorized testing and
+publication on 2026-11-15, lifting the earlier testing hold. The results below
+apply to the pinned nightly on Windows GNU, not to arbitrary Horizon versions.
 
 ### Current test pass — 2026-11-15
 
@@ -15,14 +15,33 @@ not a completed runtime claim.
 - Bundle validation through the pinned Horizon `Bundle::read`: passed, 85 files.
 - Python smoke/build/package scripts compile; `git diff --check` passed.
 - Fixed idle swimming's zero-sign handling exposed by the test suite.
-
 - Combined pinned-Horizon + Spatial GUI 0.2.3 mixin application passed:
   79 injections, 22 support modules, one engine crate.
 - Combined `cargo check --profile fast -p horizon-official --bin
   horizon-official` passed after fixing five game-adapter integration errors.
+- Combined `cargo build --profile fast -p horizon-official --bin
+  horizon-official` succeeded. No mod Rust warnings remained; the upstream
+  mimalloc C dependency emitted Windows GNU pragma/visibility warnings.
+- Isolated combined Moves/Spatial GUI runtime smoke: **10/10 checks passed**.
+  Loaded 268 external clips; confirmed body-pose ownership, shoulder/orbit
+  camera, in-game facial skin upload, face-toggle source restoration, Spatial
+  GUI camera handoff, right-click numeric decrease/backward section/back
+  navigation, and the independent Moves switch.
+- Isolated first-person/viewmodel runtime smoke: **17/17 checks passed**.
+  Confirmed 223 embedded clips without a JAR, finite renderer matrices,
+  attacks/inspect/shield/eating/drinking/mining/interactions, independent
+  arm/item controls, settings persistence across a game restart and resets.
+- The first first-person smoke attempt stopped because the control interface
+  does not accept the shorthand `f10`; using canonical `key.keyboard.f10`
+  fixed the test harness. The complete rerun passed.
 
-The executable build and isolated runtime smoke are separate remaining checks.
-Type checking and packaging do not prove original-mod visual parity.
+Local evidence: `reports/moves-smoke.json` and `reports/punchy-smoke.json`,
+with logs/screenshots alongside them. These ignored reports and temporary game
+folders do not contain or alter the user's actual saves.
+
+Automated smoke checks do not establish original-mod visual parity, every
+remote-player state, emissive appearance or all resource-reload/third-party
+interactions. The scope gaps remain documented in PORTING_STATUS.md.
 
 Earlier in this fork's development, before the current facial/movement pass:
 
@@ -35,13 +54,12 @@ The earlier results alone did **not** validate the current source. The facial ob
 per-frame skin lifecycle/emission hooks, accepted-use/attack capture, shallow
 water latching, semantic face channels, camera handoff and new support modules
 have since changed. Source inspection and formatting are not substitutes for
-compilation or in-game comparison. The current unit regression tests have now
-run; the full runtime smoke script still requires a current combined executable.
+compilation or in-game comparison. Current unit regression tests and both full
+runtime smoke scripts have now run on the combined executable.
 
-Remaining validation after implementation: current engine tests/Clippy, pinned
-mixin plan/application, bundle parsing, full combined game compilation, and
-isolated runtime/visual comparisons including facial skin restoration,
-resource reloads, remote metadata, action sequencing and Spatial GUI handoffs.
+Remaining validation: detailed original-mod visual comparison, resource reloads
+under animation, remote metadata/network states, complex action sequencing,
+emissive rendering and additional native-mod/equipment combinations.
 
 The versioned records below describe upstream validation, not this fork's
 current implementation.

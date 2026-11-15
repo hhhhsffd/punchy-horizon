@@ -98,7 +98,7 @@ try:
     ctl('mouse','left','up')
     assert any(r.get('active',{}).get('name','').startswith('attack_') for r in rows if r.get('active')),rows[-3:]
     result['checks']['sword_attack_reaches_runtime']=True
-    ctl('key','f10','tap')
+    ctl('key','key.keyboard.f10','tap')
     rows=observe(.15)
     deadline=time.monotonic()+3
     while not any(r.get('active',{}).get('name','')=='new_inspect_right' for r in rows if r.get('active')) and time.monotonic()<deadline:

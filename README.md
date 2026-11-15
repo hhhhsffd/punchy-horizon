@@ -72,12 +72,10 @@ Open **Options > Mods > Punchy + Moves > Settings** to view and configure all se
 
 ## Installation
 
-The current 0.2.0 source is unfinished. Existing files in `dist/` may predate the
-facial/runtime changes; no ready-to-use game build is claimed yet. Engine tests
-and bundle parsing pass; combined-game/runtime validation is tracked separately
-in VALIDATION.md.
-
-Once a validated 0.2.0 bundle is available:
+0.2.0 is a **work-in-progress preview**, not complete original-mod parity.
+The pinned Windows GNU combined build and both isolated runtime smoke suites
+passed; see VALIDATION.md for the precise scope. Build the bundle from source
+using DEVELOPMENT.md if no downloadable release is available.
 
 1. Use `dist/punchy-rust-preview-0.2.0.hnmod` from this fork.
 2. Add it to your Horizon instance's native mods and enable Punchy.
