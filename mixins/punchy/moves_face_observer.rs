@@ -157,7 +157,7 @@ impl Observation {
         ] {
             let active = ids.iter().any(|id| {
                 if own {
-                    game.potions.effects.contains_key(*id)
+                    game.potions.effects.get(id).is_some()
                 } else {
                     m.has_effect(id) || m.has_effect(&format!("minecraft:{id}"))
                 }

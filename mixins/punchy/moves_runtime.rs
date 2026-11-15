@@ -106,10 +106,6 @@ pub(super) fn emote_label() -> String {
             })
     })
 }
-pub(super) fn emotes(game: &Game<'_>) -> Vec<(String, String)> {
-    load(game);
-    MOVES.with(|s| s.borrow().pack.emotes())
-}
 pub(super) fn play_emote_at(game: &Game<'_>, index: usize) {
     MOVES.with(|s| s.borrow_mut().selected_emote = index);
     play_emote(game);
@@ -231,7 +227,6 @@ pub(super) fn capture_use(game: &Game<'_>, hand: Hand) -> Option<UseCapture> {
             .and_then(|s| s.data())
             .is_some_and(|d| !d.charged.is_empty()),
         fishing: game.cast_rod().is_some(),
-        fishing_bite: super::fishing::punchy_fishing::biting(game),
     })
 }
 pub(super) fn finish_use(game: &Game<'_>, before: Option<UseCapture>, success: bool) {
@@ -293,9 +288,7 @@ fn attack_strength(game: &Game<'_>) -> f32 {
     if game.legacy_rules() {
         1.
     } else if game.remote.is_some() {
-        let speed = game
-            .own_attribute("minecraft:attack_speed")
-            .unwrap_or_else(|| game.main_hand_attack_speed());
+        let speed = game.main_hand_attack_speed();
         game.hand_strength.scale(0.5, speed)
     } else {
         game.attack_strength_scale()
@@ -561,6 +554,7 @@ pub(super) fn tick(game: &mut Game<'_>) {
             .and_then(|v| v.data())
             .is_some_and(|d| !d.charged.is_empty()),
         fishing: game.cast_rod().is_some(),
+        fishing_bite: super::fishing::punchy_fishing::biting(game),
         ..Default::default()
     };
     let mut input = input;
@@ -580,6 +574,8 @@ pub(super) fn tick(game: &mut Game<'_>) {
         input.vehicle_yaw = yaw;
         input.vehicle_velocity = velocity;
     }
+    let hurt_time = p.health.hurt_animation_time;
+    let hurt_from_back = p.health.hurt_dir.to_radians().cos() < 0.;
     MOVES.with(|s| {
         let mut s = s.borrow_mut();
         let mut input = input;
@@ -620,9 +616,9 @@ pub(super) fn tick(game: &mut Game<'_>) {
                 && previous.items[0] == input.items[1]
                 && previous.items[1] == input.items[0];
         }
-        input.hurt = p.health.hurt_animation_time > s.hurt;
-        input.hurt_from_back = p.health.hurt_dir.to_radians().cos() < 0.;
-        s.hurt = p.health.hurt_animation_time;
+        input.hurt = hurt_time > s.hurt;
+        input.hurt_from_back = hurt_from_back;
+        s.hurt = hurt_time;
         if !s.armor.is_empty() && s.armor != armor {
             input.armor_changed = Some(s.armor.first() != armor.first());
         }

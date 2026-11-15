@@ -16,9 +16,13 @@ not a completed runtime claim.
 - Python smoke/build/package scripts compile; `git diff --check` passed.
 - Fixed idle swimming's zero-sign handling exposed by the test suite.
 
-The combined pinned-Horizon/Spatial GUI check is being performed separately.
-These engine and packaging results alone do not prove a working game build or
-original-mod visual parity.
+- Combined pinned-Horizon + Spatial GUI 0.2.3 mixin application passed:
+  79 injections, 22 support modules, one engine crate.
+- Combined `cargo check --profile fast -p horizon-official --bin
+  horizon-official` passed after fixing five game-adapter integration errors.
+
+The executable build and isolated runtime smoke are separate remaining checks.
+Type checking and packaging do not prove original-mod visual parity.
 
 Earlier in this fork's development, before the current facial/movement pass:
 

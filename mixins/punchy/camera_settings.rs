@@ -22,7 +22,7 @@ const PRESETS: [(&str, f32, f32, f32, f32); 4] = [
     ("Wide", 1.17, 0.2, 4.5, 80.),
 ];
 
-pub(crate) fn settings_buttons(game: &Game<'_>, buttons: &mut Vec<String>) {
+pub(super) fn settings_buttons(game: &Game<'_>, buttons: &mut Vec<String>) {
     for (key, label) in FLAGS {
         let on = game.native_setting("punchy", key).as_deref() != Some("false");
         buttons.push(format!("{label}: {}", if on { "ON" } else { "OFF" }));
@@ -50,7 +50,7 @@ pub(crate) fn settings_buttons(game: &Game<'_>, buttons: &mut Vec<String>) {
     buttons.push("Swap shoulder".into());
 }
 
-pub(crate) fn reset_settings(game: &Game<'_>) {
+pub(super) fn reset_settings(game: &Game<'_>) {
     camera::CameraSettings::default()
         .write(|key, value| game.native_set_setting("punchy", key, &value));
     for key in [
@@ -62,7 +62,7 @@ pub(crate) fn reset_settings(game: &Game<'_>) {
     }
     settings_changed(game);
 }
-pub(crate) fn settings_click(game: &Game<'_>, button: usize, back: bool) {
+pub(super) fn settings_click(game: &Game<'_>, button: usize, back: bool) {
     let mut settings = camera::CameraSettings::read(|key| game.native_setting("punchy", key));
     match button {
         0..=7 => {

@@ -325,8 +325,7 @@ pub(super) fn pose(
         camera::CameraProfiles::default()
     };
     // Pick can call back into camera targeting; never hold STATE while doing it.
-    let mining_target =
-        game.native_mapping("key.attack").is_some_and(|m| m.0) && game.pick().is_some();
+    let mining_target = game.keys.held(super::Mapping::Attack) && game.pick().is_some();
     STATE.with(|s| {
         let mut s = s.borrow_mut();
         let now = Instant::now();
@@ -466,6 +465,10 @@ fn capture_frame(game: &Game<'_>, partial: f32, position: [f64; 3], yaw: f32, pi
 }
 
 /// Some(Miss) is authoritative. None alone means vanilla retains ownership.
+#[allow(
+    dead_code,
+    reason = "Center picking is not registered until all native interaction queries agree"
+)]
 fn target(game: &Game<'_>) -> Option<camera::TargetHit> {
     if !owns_frame(game) || game.forced_hit.is_some() {
         return None;
@@ -487,6 +490,7 @@ fn target(game: &Game<'_>) -> Option<camera::TargetHit> {
     })
 }
 
+#[allow(dead_code, reason = "Reserved for the matching center-picking helper")]
 pub(super) fn pick_block(game: &Game<'_>) -> Option<Option<super::Hit>> {
     target(game).map(|hit| match hit {
         camera::TargetHit::Block(hit) => Some(super::Hit {
@@ -498,6 +502,7 @@ pub(super) fn pick_block(game: &Game<'_>) -> Option<Option<super::Hit>> {
     })
 }
 
+#[allow(dead_code, reason = "Reserved for the matching center-picking helper")]
 pub(super) fn pick_entity(game: &Game<'_>) -> Option<Option<(f64, Option<i32>)>> {
     target(game).map(|hit| match hit {
         camera::TargetHit::Entity(hit) => {

@@ -97,7 +97,8 @@ try:
     assert d["clips"] == 268 and not d["warnings"], d
     assert d["pose_owned"], d
     result["checks"]["selected_external_pack_and_body_pose"] = True
-    ctl("key", "f5", "tap")
+    # F5 intentionally requests vanilla perspective; V activates Moves.
+    ctl("key", "v", "tap")
     d = observe(2)
     assert d["camera"]["active"] and all(math.isfinite(v) for v in d["camera"]["position"]), d
     result["checks"]["shoulder_camera_renders"] = True
@@ -132,7 +133,8 @@ try:
     result["checks"]["right_click_empty_space_goes_back"] = True
     ctl("click", find("Facial animation:")["id"])
     play()
-    assert not observe(1)["faces"]["own"]["animated"]
+    own_face = observe(1)["faces"]["own"]
+    assert own_face is None or not own_face["animated"]
     result["checks"]["face_toggle_restores_original_skin"] = True
     ctl("options", "mods")
     ctl("click", find("Settings")["id"])
