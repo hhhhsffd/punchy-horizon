@@ -483,6 +483,9 @@ impl Layer {
 
 #[derive(Clone, Debug, Default)]
 pub struct Frame {
+    /// Previous/current ground-gait attachment strength; other poses retain
+    /// their authored pivots (swimming, flight, riding, emotes and leg actions).
+    pub ground_attachment: [f32; 2],
     /// The authored water clips already rotate the whole avatar horizontally.
     pub suppress_vanilla_swim: bool,
     pub layers: Vec<Layer>,
@@ -2602,7 +2605,24 @@ impl Controller {
             }
             _ => {}
         }
+        let leg_action = layers
+            .iter()
+            .filter(|layer| layer.group > 2)
+            .filter(|layer| layer.owns("left_leg") || layer.owns("right_leg"))
+            .map(|layer| layer.render_weight(1.))
+            .fold(0_f32, f32::max)
+            .clamp(0., 1.);
+        let ground_attachment = if self.state == State::Ground
+            && i.grounded
+            && layers.iter().any(|layer| {
+                layer.group == 0 && (layer.owns("left_leg") || layer.owns("right_leg"))
+            }) {
+            motion::smooth(self.gait.motion) * (1. - leg_action)
+        } else {
+            0.
+        };
         self.frame = Frame {
+            ground_attachment: [self.frame.ground_attachment[1], ground_attachment],
             suppress_vanilla_swim: (self.state == State::Swim || i.swimming && i.in_water)
                 && layers
                     .iter()

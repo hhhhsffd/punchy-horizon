@@ -42,9 +42,12 @@ Fabric, or bundled Fluid & Foolish assets are used by the new integration.
 - **Swimming rotation fix**: authored swim poses suppress the duplicate vanilla
   outer rotation while retaining normal physics and water-exit behavior.
 - **Spatial GUI coexistence**: leaves menu camera/FOV and pointer mapping alone,
-  releases body poses in menus, preserves other emote owners, and avoids F6–F8.
+  releases body poses in menus and preserves other emote owners. The configurable
+  face-editor shortcut defaults to F6 during gameplay; Spatial GUI keeps its F6
+  reload in menus, F7 settings and F8 layout editor.
 
 Settings: **Options > Mods > Punchy + Moves**. Hand poses default to **Punchy**.
+- **F6**: open the face editor directly from gameplay
 - **F10**: inspect held item
 - **F12**: reload animations and external Moves resources
 - **F4**: toggle Moves free/orbit camera mode
@@ -53,8 +56,9 @@ Settings: **Options > Mods > Punchy + Moves**. Hand poses default to **Punchy**.
 - **M / N**: select next / play selected external Moves emote
 
 The custom emote wheel is intentionally out of scope. Bindings are exposed on
-the native mod's settings page. Rebind any old
-F6/F7 assignments inherited from an earlier installation to avoid Spatial GUI.
+the native mod's settings page. Change **Open face editor** there to choose a
+different key. F6 takes priority over Spatial GUI reload only during gameplay;
+rebinding it restores Spatial GUI's F6 reload while playing too.
 
 ## In-Game Live HUD Editor (F9)
 

@@ -5,6 +5,71 @@ use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU};
 
 pub type Parts = [[f32; 9]; 6];
 
+/// A one-piece skin leg cannot translate away from the pelvis like a multi-part
+/// animation rig. Anchor its top to the posed hip and solve its rotation/length
+/// to retain the authored foot position. Common root transforms are already in
+/// `parts`, so feet stay planted through root bob and torso lean as well.
+pub fn attach_ground_legs(parts: &mut Parts, rest: &Parts, weight: f32) {
+    let weight = weight.clamp(0., 1.);
+    let bind_body = matrix(&rest[1]);
+    if weight <= 0. || !bind_body.is_finite() || bind_body.determinant().abs() < 1e-8 {
+        return;
+    }
+    let hips = matrix(&parts[1]) * bind_body.inverse();
+    for index in [4, 5] {
+        let original = parts[index];
+        if original[7] <= 0. {
+            continue;
+        }
+        let foot = matrix(&original).transform_point3(Vec3::new(0., 12., 0.));
+        let hip = hips.transform_point3(Vec3::from_slice(&rest[index][..3]));
+        let position = Vec3::from_slice(&original[..3]).lerp(hip, weight);
+        let direction = foot - position;
+        if !direction.is_finite() || direction.length_squared() < 1e-8 {
+            continue;
+        }
+        let old_rotation = rotation(&original);
+        let turn = Quat::from_rotation_arc(old_rotation * Vec3::Y, direction.normalize());
+        let solved = Mat4::from_scale_rotation_translation(
+            Vec3::new(original[6], direction.length() / 12., original[8]),
+            (turn * old_rotation).normalize(),
+            position,
+        );
+        write_matrix(&mut parts[index], solved);
+    }
+}
+
+#[cfg(test)]
+mod ground_attachment_tests {
+    use super::*;
+    #[test]
+    fn running_legs_meet_the_hips_without_moving_the_authored_feet() {
+        let mut rest = [[0., 0., 0., 0., 0., 0., 1., 1., 1.]; 6];
+        rest[4][..3].copy_from_slice(&[-1.9, 12., 0.]);
+        rest[5][..3].copy_from_slice(&[1.9, 12., 0.]);
+        let mut run = rest;
+        run[1][3] = 0.3;
+        run[1][1] = -1.;
+        run[4][3] = 0.9;
+        run[4][1] = 10.;
+        run[4][2] = -3.;
+        run[5][3] = -0.7;
+        run[5][1] = 14.;
+        run[5][2] = 2.;
+        let feet = [4, 5].map(|i| matrix(&run[i]).transform_point3(Vec3::new(0., 12., 0.)));
+        let original = run;
+        attach_ground_legs(&mut run, &rest, 0.);
+        assert_eq!(run, original);
+        attach_ground_legs(&mut run, &rest, 1.);
+        for (n, i) in [4, 5].into_iter().enumerate() {
+            let hip = matrix(&run[1]).transform_point3(Vec3::from_slice(&rest[i][..3]));
+            assert!(Vec3::from_slice(&run[i][..3]).abs_diff_eq(hip, 1e-5));
+            let foot = matrix(&run[i]).transform_point3(Vec3::new(0., 12., 0.));
+            assert!(foot.abs_diff_eq(feet[n], 1e-5));
+        }
+    }
+}
+
 pub fn rotation(p: &[f32; 9]) -> Quat {
     Quat::from_euler(EulerRot::ZYX, p[5], p[4], p[3])
 }

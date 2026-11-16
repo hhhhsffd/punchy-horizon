@@ -54,7 +54,10 @@ retained; Fluid & Foolish remains an external, user-installed resource pack.
   local-avatar visibility/fading hooks.
 - Separate Moves/body/camera/framing/face switches, persistent settings,
   backwards right-click adjustments and back navigation. No custom emote wheel.
-- Spatial GUI menu/pointer/camera ownership guards; no F6–F8 default conflicts.
+- Spatial GUI menu/pointer/camera ownership guards. Face-editor F6 takes priority
+  during gameplay; Spatial GUI keeps F6 in menus and its F7/F8 actions.
+- First-person tuning ownership follows the pose through returns/interruption;
+  ground-gait hip attachment preserves the animated feet on one-piece skin legs.
 
 The pinned Windows GNU combined build and engine/pack tests pass. In-game
 regression checks cover the facial editor, swimming rotation and wing attachment.

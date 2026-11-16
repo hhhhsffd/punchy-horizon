@@ -12,6 +12,36 @@ const ID: &str = "punchy";
 const ROWS: usize = 13;
 thread_local! { static UI: RefCell<Option<Session>> = const { RefCell::new(None) }; }
 thread_local! { static POINTER: std::cell::Cell<[f32; 2]> = const { std::cell::Cell::new([0.; 2]) }; }
+thread_local! { static OPEN_REQUEST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+pub(super) fn shortcut(game: &Game<'_>, key: &str, repeat: bool) -> bool {
+    if !game.native_on(ID)
+        || game.player.is_none()
+        || game.screen != super::Screen::Playing
+        || game.screen_over_playing()
+        || key != game.native_mod_key(ID, "face_editor", "key.keyboard.f6")
+    {
+        return false;
+    }
+    if !repeat {
+        OPEN_REQUEST.with(|request| request.set(true));
+    }
+    true
+}
+pub(super) fn flush_shortcut(game: &mut Game<'_>) {
+    if !OPEN_REQUEST.with(|request| request.replace(false)) {
+        return;
+    }
+    let Some(index) = game.settings.mods.installed.iter().position(|m| m.id == ID) else {
+        return;
+    };
+    if game.player.is_none() || game.screen != super::Screen::Playing {
+        return;
+    }
+    game.capture(false);
+    game.open_options_at(false, horizon_client::options_ui::Page::NativeMod(index));
+    game.native_settings_refresh(index);
+    open(game);
+}
 pub(super) fn pointer() -> [f32; 2] {
     POINTER.with(|point| point.get())
 }

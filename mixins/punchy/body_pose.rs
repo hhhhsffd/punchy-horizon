@@ -13,6 +13,10 @@ pub struct Body {
 // capes and face layers must all use the same swimming coordinate system.
 std::thread_local! {
     static SWIM_BASE: std::cell::Cell<bool> = const {std::cell::Cell::new(false)};
+    static POSE_DIAGNOSTIC: std::cell::RefCell<Option<serde_json::Value>> = const {std::cell::RefCell::new(None)};
+}
+pub fn diagnostic() -> Option<serde_json::Value> {
+    POSE_DIAGNOSTIC.with(|value| value.borrow().clone())
 }
 pub fn base_transform(m: &super::Mob, alpha: f32, origin: Mat4) -> core::ops::ControlFlow<Mat4> {
     let ours = m.emote.as_ref().is_some_and(|pose| {
@@ -88,6 +92,20 @@ impl horizon_hooks::players::BodyPose for Body {
                     scale.z,
                 ];
             }
+        }
+        let [previous, current] = self.frame.ground_attachment;
+        punchy_engine::moves_render::attach_ground_legs(
+            poses,
+            rest,
+            previous + (current - previous) * partial,
+        );
+        if std::env::var_os("PUNCHY_MOVES_DIAGNOSTICS").is_some() {
+            POSE_DIAGNOSTIC.with(|value| {
+                *value.borrow_mut() = Some(serde_json::json!({
+                    "age": age, "rest": rest, "parts": poses,
+                    "ground_attachment": previous + (current - previous) * partial,
+                }))
+            });
         }
         !self.frame.layers.is_empty()
     }

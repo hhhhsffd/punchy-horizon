@@ -409,6 +409,7 @@ pub(super) fn frame(game: &mut Game<'_>) {
                 "elytra_equipped":game.armor[1].as_ref().is_some_and(|stack|stack.item.as_ref()=="minecraft:elytra"),
                 "suppress_vanilla_swim":s.controller.frame.suppress_vanilla_swim,
                 "camera":super::punchy_camera::diagnostic(),
+                "body":horizon_client::mobs::anim::punchy_moves::diagnostic(),
                 "faces":super::punchy_faces::diagnostic(game)})
         });
         if let Ok(bytes) = serde_json::to_vec(&value) {

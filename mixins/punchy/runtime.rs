@@ -318,7 +318,7 @@ pub(super) fn tick(game: &mut Game<'_>) {
         }
         if let Some(p)=s.active.as_mut() {
             p.advance(speed);
-            if p.stopping && p.out_weight<=0. {s.active=None;}
+            if p.finished() {s.active=None;}
         }
         if let Some(path)=std::env::var_os("PUNCHY_DIAGNOSTICS") {
             let value=serde_json::json!({"loaded":s.source.is_some(),"resource_source":"embedded","clips":s.clips.len(),"error":s.error,
@@ -330,6 +330,9 @@ pub(super) fn tick(game: &mut Game<'_>) {
 }
 
 pub(super) fn key(game: &mut Game<'_>, key: &str, pressed: bool) {
+    if pressed && super::punchy_face_ui::shortcut(game, key, false) {
+        return;
+    }
     if game.native_on("spatial_gui")
         && matches!(
             key,
@@ -1044,7 +1047,7 @@ fn bone_delta(s: &State, name: &str, alpha: f32) -> Mat4 {
     };
     let expression = p.previous_expression + (p.expression - p.previous_expression) * alpha;
     let sample = p.clip.sample(name, time, expression);
-    let weight = p.previous_weight + (p.weight - p.previous_weight) * alpha;
+    let weight = p.influence_at(alpha);
     let sample = Pose::default().blend(sample, weight);
     let mut rest = base.matrix();
     rest.w_axis = (base.position / 16.).extend(1.);
@@ -1211,9 +1214,7 @@ pub(super) fn begin(game: &mut Game<'_>, alpha: f64) {
                             };
                             (&*p.clip, t, p.previous_expression+(p.expression-p.previous_expression)*s.render_alpha)
                         });
-                        let weight = s.active.as_ref().map_or(1., |p| {
-                            p.previous_weight + (p.weight - p.previous_weight) * s.render_alpha
-                        });
+                        let weight = s.active.as_ref().map_or(0., |p| p.arm_influence_at(left, s.main_left, s.offhand_item, s.render_alpha));
                         let arm = tuning.arm_transform(id, left).unwrap_or_default();
                         let item = tuning.item_transform(id, left).unwrap_or_default();
                         let suppress_tuning = animation.is_some_and(|(c, t, _)| {
@@ -1231,7 +1232,7 @@ pub(super) fn begin(game: &mut Game<'_>, alpha: f64) {
                             &arm,
                             &item,
                             factor,
-                            if owns { 1. - weight } else { 1. },
+                            1. - weight,
                             id.ends_with(":chest")
                                 || id.ends_with(":piston")
                                 || id.ends_with(":sticky_piston"),
@@ -1251,6 +1252,8 @@ pub(super) fn begin(game: &mut Game<'_>, alpha: f64) {
         s.render_count=s.render_count.saturating_add(1);
         if let Some(path)=std::env::var_os("PUNCHY_RENDER_DIAGNOSTICS") {
             let value=serde_json::json!({"frames":s.render_count,"authored_poses":authored.iter().flatten().count(),"active":active,
+                "clip":s.active.as_ref().map(|p|p.clip.name.as_str()),
+                "influence":s.active.as_ref().map_or(0.,|p|p.influence_at(s.render_alpha)),
                 "arm_matrices":authored.map(|p|p.map(|p|s.viewmodel.arms.apply(p.arm).to_cols_array())),"item_matrices":authored.map(|p|p.map(|p|s.viewmodel.items.apply(p.item).to_cols_array())),"viewmodel":{"arms":[s.viewmodel.arms.offset.x,s.viewmodel.arms.offset.y,s.viewmodel.arms.offset.z,s.viewmodel.arms.scale],"items":[s.viewmodel.items.offset.x,s.viewmodel.items.offset.y,s.viewmodel.items.offset.z,s.viewmodel.items.scale]}});
             if let Ok(bytes)=serde_json::to_vec_pretty(&value){let _=std::fs::write(path,bytes);}
         }

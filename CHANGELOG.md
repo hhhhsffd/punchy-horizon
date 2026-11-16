@@ -2,6 +2,12 @@
 
 ## 0.2.0
 
+- Fix the first-person punch snap by fading tuning ownership with the pose and
+  retaining the final return-blend interval, including interrupted punches.
+- Attach one-piece running legs to the posed hips while retaining authored
+  foot placement. Swimming, flight, riding and leg-action poses keep their pivots.
+- Add the configurable **Open face editor** shortcut, default F6 in gameplay;
+  preserve Spatial GUI's menu shortcuts and support binding persistence.
 - Add native Rust Moves body animations and shoulder/orbit camera, with separate
   master, body, camera and facial switches and external Fluid & Foolish support.
 - Add layered facial animation, custom shapes/looks/reactions, per-eye glow,

@@ -30,6 +30,44 @@ pub struct Playback {
 }
 
 impl Playback {
+    /// Authored ownership must fade with the pose, including tuning overrides.
+    pub fn influence_at(&self, alpha: f32) -> f32 {
+        self.blend_influence(
+            alpha,
+            1.,
+            self.from.as_ref().map_or(0., |p| p.influence_at(alpha)),
+        )
+    }
+    pub fn arm_influence_at(
+        &self,
+        left: bool,
+        main_left: bool,
+        offhand_item: bool,
+        alpha: f32,
+    ) -> f32 {
+        let owns = (main_left != (self.hand == action::Hand::Off)) == left
+            || crate::policy::dual_handed(
+                &self.clip,
+                self.time_at(alpha),
+                offhand_item,
+                offhand_item,
+            );
+        let from = self.from.as_ref().map_or(0., |p| {
+            p.arm_influence_at(left, main_left, offhand_item, alpha)
+        });
+        self.blend_influence(alpha, if owns { 1. } else { 0. }, from)
+    }
+    fn blend_influence(&self, alpha: f32, target: f32, from: f32) -> f32 {
+        let alpha = alpha.clamp(0., 1.);
+        let entrance =
+            (self.previous_weight + (self.weight - self.previous_weight) * alpha).clamp(0., 1.);
+        let exit = self.previous_out_weight + (self.out_weight - self.previous_out_weight) * alpha;
+        let entrance = entrance * entrance * (3. - 2. * entrance);
+        (from + (target - from) * entrance) * exit.clamp(0., 1.)
+    }
+    pub fn finished(&self) -> bool {
+        self.stopping && self.out_weight <= 0. && self.previous_out_weight <= 0.
+    }
     pub fn time_at(&self, alpha: f32) -> f32 {
         if self.time < self.previous {
             self.time
@@ -171,6 +209,56 @@ mod tests {
             p.advance(1.);
         }
         assert_eq!(p.out_weight, 0.);
+    }
+    #[test]
+    fn return_blend_retains_the_last_interval_and_releases_tuning_continuously() {
+        let mut p = playback("punch");
+        p.stopping = true;
+        p.out_weight = 0.;
+        p.previous_out_weight = 0.2;
+        assert!(!p.finished());
+        assert!((p.influence_at(0.) - 0.2).abs() < 1e-6);
+        assert!((p.influence_at(0.5) - 0.1).abs() < 1e-6);
+        assert_eq!(p.influence_at(1.), 0.);
+        let resources = crate::resources::embedded().unwrap();
+        let skeleton = Skeleton::new(&resources.bones).unwrap();
+        let tuning = crate::tuning::Transform {
+            rotation: [0., -76., 36.],
+            ..Default::default()
+        };
+        let attach = |frame, rotation_weight| {
+            crate::attachments::attach(
+                frame,
+                false,
+                &tuning,
+                &Default::default(),
+                1.,
+                rotation_weight,
+                false,
+            )
+            .arm
+        };
+        let at_end = attach(
+            p.frame(&skeleton, false, false, false, 1.),
+            1. - p.influence_at(1.),
+        );
+        let neutral = attach(sample_frame(&skeleton, false, None, 1., true), 1.);
+        assert!(at_end.abs_diff_eq(neutral, 1e-6));
+        p.advance(1.);
+        assert!(p.finished());
+    }
+    #[test]
+    fn interrupted_punch_keeps_outgoing_arm_tuning_ownership() {
+        let old = playback("old_punch");
+        let mut next = playback("next_punch");
+        next.weight = 0.;
+        next.previous_weight = 0.;
+        next.from = Some(Box::new(old));
+        assert_eq!(next.arm_influence_at(false, false, false, 1.), 1.);
+        assert_eq!(next.arm_influence_at(true, false, false, 1.), 0.);
+        next.hand = action::Hand::Off;
+        assert_eq!(next.arm_influence_at(false, false, false, 1.), 1.);
+        assert_eq!(next.arm_influence_at(true, false, false, 1.), 0.);
     }
     #[test]
     fn interruption_preserves_live_outgoing_pose_and_nested_transition_origin() {

@@ -5,7 +5,38 @@
 Full original-mod parity is not established. The user authorized in-game testing
 and a GitHub update on 2026-11-15, lifting the implementation-only hold.
 
-### Facial/editor/swimming/elytra verification — 2026-11-16
+### Punch, running legs and face-editor shortcut — 2026-11-16
+
+- Reproduced the bare-hand punch return snap in the prior executable. Tuning
+  rotation ownership was held at full strength until playback removal. It now
+  fades with the actual per-arm pose, retains outgoing ownership on interruption
+  and renders the final fade interval before removing playback.
+- Native sprint rendering keeps the one-piece legs' upper pivots on the posed
+  hips. The rotation/length solve preserves each authored foot position; it is
+  enabled for ground gait and yields to authored leg actions and other states.
+- Default **F6** opens the face editor from gameplay, including with Spatial GUI
+  enabled. The native mod settings expose the binding. Spatial GUI retains F6
+  reload in menus and its F7 settings/F8 layout shortcuts. Remapping the face
+  shortcut restores Spatial GUI's F6 reload during gameplay too.
+- `cargo test --locked`: **156 unit tests + external Fluid & Foolish pack test
+  passed**. Clippy with warnings denied, formatting and Python syntax checks pass.
+- Combined build: **87 injections, 23 support modules and one engine crate**;
+  the Windows GNU `fast` executable builds. The **95-file bundle** passes
+  Horizon's actual bundle parser. Sources match the compiled stage and bundle.
+- Isolated `motion_smoke.py`: **7/7 checks pass** for punch return/interruption,
+  sprint hip attachment, default F6, Spatial GUI F7, rebinding and persistence
+  across restart. The observed punch-to-idle hand translation step was 0.0053
+  blocks; the maximum sampled sprint hip-pivot error was below 0.000001 pixels.
+- Existing first-person/viewmodel suite: **17/17 checks pass**. Existing
+  Moves/swimming/elytra/facial-editor suite: **22/22 checks pass**.
+- Evidence: `reports/motion-fixes/motion-smoke.json`, `first-person-smoke.json`
+  and `moves-smoke.json`, with screenshots and logs in that folder. The earlier
+  reproduction is `reports/motion-before.json`. All worlds/homes are temporary.
+
+The current prebuilt includes this follow-up and Spatial GUI 0.2.3. These checks
+cover the reported regressions; the broader parity boundaries below still apply.
+
+### Earlier facial/editor/swimming/elytra verification — 2026-11-16
 
 - `cargo test --locked`: 153 unit tests and the external Fluid & Foolish pack
   integration test pass.

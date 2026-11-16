@@ -112,7 +112,7 @@ def find(prefix):
     ui = ctl("ui")
     w, h = ui["gui_size"]
     def visible(nodes):
-        return next((node for node in nodes if (node.get("label") or "").startswith(prefix)
+        return next((node for node in nodes if node.get("enabled", True) and (node.get("label") or "").startswith(prefix)
                      and 38 < node["bounds"][1] + node["bounds"][3] / 2 < h - 38), None)
     if node := visible(ui["widgets"]):
         return node

@@ -7,6 +7,24 @@ priority = 100
 horizon_revision = "9f42064c11efe7ef3e5ed2baad7ddc2a3b36eea0"
 
 [[injection]]
+id = "face_shortcut_input"
+kind = "HEAD"
+cancellable = true
+priority = 200
+target = "horizon_client::game::Game<'_>::handle_window_event_inner"
+helper = "face_shortcut_input.rs"
+bindings = [{ name="game", ty="&crate::game::Game<'_>", value="&*self" }, { name="event", ty="&winit::event::WindowEvent", value="&event" }]
+
+[[injection]]
+id = "face_shortcut_screen"
+kind = "HEAD"
+cancellable = true
+priority = 200
+target = "horizon_client::game::native_hooks::Game<'_>::native_screen_key_pressed_pre"
+helper = "face_shortcut_screen.rs"
+bindings = [{ name="game", ty="&crate::game::Game<'_>", value="&*self" }, { name="key", ty="&str", value="key" }, { name="repeat", ty="bool", value="repeat" }, { name="canceled", ty="&mut bool", value="&mut *canceled" }]
+
+[[injection]]
 id = "moves_faces_lights"
 kind = "HEAD"
 target = "horizon_client::game::native_hooks::Game<'_>::native_visuals"

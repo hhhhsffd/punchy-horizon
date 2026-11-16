@@ -5,6 +5,11 @@ fn list_punchy(game: &crate::game::Game<'_>, mods: &mut Vec<crate::game::native_
         description: "Self-contained Rust animation preview. Animation data included.".into(),
         keys: vec![
             [
+                "face_editor".into(),
+                "Open face editor".into(),
+                "key.keyboard.f6".into(),
+            ],
+            [
                 "inspect".into(),
                 "Inspect item".into(),
                 "key.keyboard.f10".into(),

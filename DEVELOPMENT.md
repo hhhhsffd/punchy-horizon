@@ -79,3 +79,8 @@ exact visual parity with the original mod.
 
 Use `--spatial-options` with `--faces` to enable Spatial GUI on the isolated
 options screen and run the same editor interactions through its captured layer.
+
+`tools/motion_smoke.py` takes the same binary/control/resources/pack/report paths
+and checks bare-hand punch return and interruption, rendered sprint hip seams,
+F6 opening, rebinding through the native settings UI and persistence across a
+game restart. It also confirms Spatial GUI's F7 settings still open.
