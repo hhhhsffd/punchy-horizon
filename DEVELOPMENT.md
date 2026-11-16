@@ -4,7 +4,7 @@
 
 - Minecraft: **26.3**.
 - Bundle: **0.2.0**; see PORTING_STATUS.md for incomplete original parity.
-- Latest published Horizon nightly checked 2026-11-15: `9f42064c11efe7ef3e5ed2baad7ddc2a3b36eea0`.
+- Latest published Horizon nightly checked 2026-11-16: `9f42064c11efe7ef3e5ed2baad7ddc2a3b36eea0`.
 - horizon-mixins: `e59da9094f0c2fdda6c627fe9eff22dec6a906f0`.
 
 Other revisions require validation. This native mod runs with the same account
@@ -69,3 +69,13 @@ poses, shoulder/orbit camera, facial skin upload/restoration, Spatial GUI camera
 handoff, right-click controls, back navigation, and the Moves switch.
 Pass `--binary`, `--ctl`, `--resources`, `--pack` (an unpacked external pack),
 and `--report`. It also uses only a new temporary game folder.
+
+Add `--swimming --elytra --faces` to exercise authored swimming and water exit,
+wing attachment during equipped walking, and the integrated face editor's
+pointer input, undo/redo, right-click controls, save/reopen, custom looks/shapes,
+per-eye glow controls and PNG export. Reports and screenshots go beside the
+requested report path. These checks cover regressions; they do not establish
+exact visual parity with the original mod.
+
+Use `--spatial-options` with `--faces` to enable Spatial GUI on the isolated
+options screen and run the same editor interactions through its captured layer.

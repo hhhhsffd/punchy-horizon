@@ -20,5 +20,6 @@ Java is not part of the native mod runtime. Source-derived Rust does not change
 the original project's all-rights-reserved status. Preserve the original notices;
 public redistribution rights should not be inferred from decompilation.
 
-The earlier testing hold was lifted by the user on 2026-11-15.
+After the implementation hold, the user authorized in-game testing and a GitHub
+update on 2026-11-15. Engine tests and isolated game scenarios have been run.
 See VALIDATION.md for checks actually performed and the remaining validation scope.

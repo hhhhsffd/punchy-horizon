@@ -15,8 +15,9 @@ fn moves_faces_emission(
     };
     // HEAD re-entry is required by the pinned transformer: render_visible
     // contains closures and ?, which it cannot instrument with RETURN.
-    // A glowing avatar takes the native CPU draw path so its normal and
-    // full-bright passes share ordering. Non-glowing avatars keep GPU skinning.
+    // An avatar with fractional face geometry takes the native CPU draw path
+    // so skin, face and full-bright pieces share ordering. Other avatars retain
+    // GPU skinning.
     horizon_client::mobs::render::render_visible(
         m,
         alpha,
@@ -34,6 +35,7 @@ fn moves_faces_emission(
         alpha,
         base,
         atlas,
+        light,
         data,
         body_visible,
         out,

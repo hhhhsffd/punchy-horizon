@@ -32,6 +32,15 @@ Fabric, or bundled Fluid & Foolish assets are used by the new integration.
   blink/gaze/reaction channels, external clip face channels, and an emissive face
   pass. Original skin pixels remain untouched; remote skins with embedded facial
   metadata retain their owner's style. Exact visual parity is not established.
+- **Face editor and rendering**: fractional face layers,
+  external custom shapes/looks/reactions, per-eye glow effects and colored
+  visual lights, and an integrated face editor with persistent marks, editable
+  looks/shapes and explicit PNG export. Open **Open face editor** from the
+  native settings page.
+- **Elytra wing attachment**: wings follow the animated torso
+  and root while walking, through the native wing equipment renderer.
+- **Swimming rotation fix**: authored swim poses suppress the duplicate vanilla
+  outer rotation while retaining normal physics and water-exit behavior.
 - **Spatial GUI coexistence**: leaves menu camera/FOV and pointer mapping alone,
   releases body poses in menus, preserves other emote owners, and avoids F6–F8.
 
@@ -94,7 +103,7 @@ Native mods run with the same access as the game.
 ## Compatibility and development
 
 Targets **`nightly-2026-11-13-9f42064`**, the latest published game nightly
-checked on 2026-11-15, Minecraft 26.3. Horizon main has newer, unpublished
+checked on 2026-11-16, Minecraft 26.3. Horizon main has newer, unpublished
 commits; “latest” here means the launcher's published game, not main.
 Pins: Horizon `9f42064c11efe7ef3e5ed2baad7ddc2a3b36eea0`,
 mixins `e59da9094f0c2fdda6c627fe9eff22dec6a906f0`.

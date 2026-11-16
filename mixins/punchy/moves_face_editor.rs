@@ -539,8 +539,13 @@ impl FaceEditor {
             selected_tool: self.tool,
             preview_look: self.preview_look.clone(),
             dirty: self.dirty,
-            actions: std::mem::take(&mut self.actions),
+            actions: self.take_actions(),
         }
+    }
+    /// Native hosts may persist explicit Save/Export requests immediately on
+    /// input, even if a close event arrives before the next rendered frame.
+    pub fn take_actions(&mut self) -> Vec<EditorAction> {
+        std::mem::take(&mut self.actions)
     }
     /// Machine-readable editor controls for native widgets (sliders, color
     /// pickers, reaction toggles, custom personality and per-eye glow panels).

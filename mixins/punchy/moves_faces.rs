@@ -21,6 +21,11 @@ std::thread_local! {
 }
 #[derive(Default)]
 struct Session {
+    library: Option<
+        std::sync::Arc<
+            horizon_client::mobs::anim::punchy_moves::engine::moves_expressions::FaceLibrary,
+        >,
+    >,
     entries: BTreeMap<(bool, u32), Entry>,
     connection: Option<u64>,
 }
@@ -29,9 +34,9 @@ struct Entry {
     alias: String,
     engine: FaceEngine,
     pixels: Vec<u8>,
-    emission: Vec<u8>,
     reaction: String,
     observation: Observation,
+    marks: Option<horizon_client::mobs::anim::punchy_moves::engine::moves_expressions::FaceMarks>,
 }
 pub(super) struct ResolveGuard;
 impl Drop for ResolveGuard {
@@ -148,10 +153,51 @@ pub(super) fn diagnostic(game: &Game<'_>) -> serde_json::Value {
                 "animated":game.player_model.as_ref().is_some_and(|m|m.skin.as_deref()==Some(entry.alias.as_str())),
                 "uploaded":uploaded(game,&entry.alias),
                 "reaction":entry.reaction,
+                "wing_delta":game.player_model.as_ref().and_then(punchy_face_layer::wing_diagnostic),
             })
         });
-        serde_json::json!({"players":s.entries.len(),"own":own})
+        serde_json::json!({"players":s.entries.len(),"own":own,
+            "pointer":super::punchy_face_ui::pointer(),
+            "editor":super::punchy_face_ui::diagnostic(),
+            "library_warnings":s.library.as_ref().map(|library| &library.warnings)})
     })
+}
+pub(super) fn lights(game: &Game<'_>, out: &mut Vec<super::native_hooks::NativeColoredLight>) {
+    if !enabled(game) {
+        return;
+    }
+    let mut sources = Vec::new();
+    if let Some(model) = &game.player_model {
+        sources.extend(punchy_face_layer::lights(
+            model,
+            game.clock.camera_fraction() as f32,
+            game.res.mob_data(),
+        ));
+    }
+    for model in game.mobs.iter().filter(|m| !m.removed).take(CAP) {
+        sources.extend(punchy_face_layer::lights(
+            model,
+            game.clock.fraction() as f32,
+            game.res.mob_data(),
+        ));
+    }
+    let origin = game.player.as_ref().map_or(glam::DVec3::ZERO, |p| {
+        glam::DVec3::new(p.position.x, p.position.y, p.position.z)
+    });
+    sources.sort_by(|a, b| {
+        glam::DVec3::from_array(a.0)
+            .distance_squared(origin)
+            .total_cmp(&glam::DVec3::from_array(b.0).distance_squared(origin))
+    });
+    for (at, rgb, radius, intensity) in sources.into_iter().take(8_usize.saturating_sub(out.len()))
+    {
+        out.push(super::native_hooks::NativeColoredLight {
+            at,
+            rgb,
+            radius,
+            intensity,
+        });
+    }
 }
 fn conditions(game: &Game<'_>, m: &Mob, own: bool, time: f32) -> FaceConditions {
     let mut c = FaceConditions {
@@ -285,6 +331,12 @@ pub(super) fn frame(game: &mut Game<'_>) {
         clear(game);
     }
     let preferences = settings(game, None);
+    if !uploaded(game, punchy_face_layer::WHITE) {
+        game.store_skin(punchy_face_layer::WHITE.into(), [255_u8; 4].repeat(64 * 64));
+    }
+    game.skin_downloads
+        .borrow_mut()
+        .drawn(punchy_face_layer::WHITE);
     let mut players = Vec::new();
     if let Some(m) = game.player_model.as_ref() {
         players.push((
@@ -322,6 +374,10 @@ pub(super) fn frame(game: &mut Game<'_>) {
     FACES.with(|s| {
         let mut s = s.borrow_mut();
         s.connection = Some(connection);
+        if s.library.is_none() {
+            s.library=Some(std::sync::Arc::new(horizon_client::mobs::anim::punchy_moves::engine::moves_expressions::FaceLibrary::load(&game.options.resources)));
+        }
+        let library=s.library.as_ref().unwrap().clone();
         for (own, id, source, c) in &mut players {
             let key = (*own, *id);
             let source = if source.starts_with(PREFIX) {
@@ -353,20 +409,31 @@ pub(super) fn frame(game: &mut Game<'_>) {
                         alias: format!("{PREFIX}{}_{id}", if *own { "local" } else { "remote" }),
                         engine,
                         pixels: Vec::new(),
-                        emission: Vec::new(),
                         reaction: String::new(),
                         observation: Observation::default(),
+                        marks: None,
                     },
                 );
             }
             let entry = s.entries.get_mut(&key).unwrap();
+            if *own {
+                let marks = game.native_setting(ID, "moves_face_marks");
+                let marks = marks.as_deref().filter(|v| !v.is_empty()).map(
+                    horizon_client::mobs::anim::punchy_moves::engine::moves_expressions::FaceMarks::parse,
+                );
+                if entry.marks != marks {
+                    if marks.is_some() { entry.engine.set_marks(marks.as_ref()); }
+                    else { entry.engine.restore_embedded_marks(); }
+                    entry.marks = marks;
+                }
+            }
             if !*own && !entry.engine.marked && !preferences.on_other_players {
-                punchy_face_layer::set(&entry.alias, None);
+                punchy_face_layer::remove(&entry.alias);
                 restorations.push((key, entry.alias.clone(), entry.source.clone()));
                 continue;
             }
             // Explicit local preferences take precedence over embedded skin style.
-            let style = if *own {
+            let mut style = if *own {
                 settings(game, entry.engine.embedded_settings.as_ref())
             } else if let Some(embedded) = &entry.engine.embedded_settings {
                 // Marked remote skins retain their owner's appearance.
@@ -376,6 +443,7 @@ pub(super) fn frame(game: &mut Game<'_>) {
             } else {
                 preferences.clone()
             };
+            library.apply(&mut style);
             entry.engine.set_settings(style);
             let model = if *own {
                 game.player_model.as_ref()
@@ -385,46 +453,36 @@ pub(super) fn frame(game: &mut Game<'_>) {
             if let Some(model) = model {
                 entry.observation.update(game, model, *own, c);
             }
+            c.quads = true;
             let output = entry.engine.render(c);
-            entry.reaction = output.frame.reaction;
-            punchy_face_layer::set(&entry.alias, None);
+            entry.reaction = output.frame.reaction.clone();
             if output.detected
                 && entry.engine.settings.enabled
                 && !c.hidden
                 && (c.own_player || entry.engine.settings.on_other_players || entry.engine.marked)
             {
-                if output.rgba != entry.pixels || !uploaded(game, &entry.alias) {
-                    game.store_skin(entry.alias.clone(), output.rgba.clone());
+                punchy_face_layer::set(&entry.alias, &output);
+                if output.geometry_skin != entry.pixels || !uploaded(game, &entry.alias) {
+                    game.store_skin(entry.alias.clone(), output.geometry_skin.clone());
                     if uploaded(game, &entry.alias) {
-                        entry.pixels = output.rgba;
+                        entry.pixels = output.geometry_skin;
                     }
                 }
                 if uploaded(game, &entry.alias) {
                     replacements.push((key, entry.alias.clone()));
-                    let glow = format!("{}_emission", entry.alias);
-                    if output.emission.chunks_exact(4).any(|p| p[3] != 0) {
-                        if output.emission != entry.emission || !uploaded(game, &glow) {
-                            game.store_skin(glow.clone(), output.emission.clone());
-                            if uploaded(game, &glow) {
-                                entry.emission = output.emission;
-                            }
-                        }
-                        if uploaded(game, &glow) {
-                            punchy_face_layer::set(&entry.alias, Some(&glow));
-                            game.skin_downloads.borrow_mut().drawn(&glow);
-                        }
-                    }
                 } else {
+                    punchy_face_layer::remove(&entry.alias);
                     restorations.push((key, entry.alias.clone(), entry.source.clone()));
                 }
             } else {
+                punchy_face_layer::remove(&entry.alias);
                 restorations.push((key, entry.alias.clone(), entry.source.clone()));
             }
         }
         s.entries.retain(|key, entry| {
             let keep = players.iter().any(|(own, id, _, _)| key == &(*own, *id));
             if !keep {
-                punchy_face_layer::set(&entry.alias, None);
+                punchy_face_layer::remove(&entry.alias);
                 restorations.push((*key, entry.alias.clone(), entry.source.clone()));
             }
             keep
@@ -458,6 +516,43 @@ fn uploaded(game: &Game<'_>, alias: &str) -> bool {
     game.skin_slots.contains(alias) && game.gui.atlas.sprites.contains_key(alias)
 }
 
+pub(super) fn editor(
+    game: &Game<'_>,
+) -> Result<horizon_client::mobs::anim::punchy_moves::engine::moves_expressions::FaceEditor, String>
+{
+    use horizon_client::mobs::anim::punchy_moves::engine::moves_expressions::{
+        FaceEditor, FaceMarks,
+    };
+    FACES.with(|s| {
+        let s = s.borrow();
+        if let Some((_, entry)) = s.entries.iter().find(|((own, _), _)| *own) {
+            return FaceEditor::from_engine(&entry.engine);
+        }
+        let model = game
+            .player_model
+            .as_ref()
+            .ok_or("Enter a world before opening the face editor")?;
+        let source = model.skin.as_deref().unwrap_or(&model.kind.texture);
+        let pixels = game
+            .native_client_texture(source)
+            .ok_or("Waiting for player skin; try again after it loads")?;
+        let mut editor = FaceEditor::new(
+            &pixels.rgba,
+            pixels.width,
+            pixels.height,
+            settings(game, None),
+        )?;
+        if let Some(marks) = game
+            .native_setting(ID, "moves_face_marks")
+            .filter(|s| !s.is_empty())
+        {
+            editor.engine.set_marks(Some(&FaceMarks::parse(&marks)));
+            editor = FaceEditor::from_engine(&editor.engine)?;
+        }
+        Ok(editor)
+    })
+}
+
 const TOGGLES: [(&str, &str, bool); 6] = [
     ("moves_faces_enabled", "Facial animation", true),
     ("moves_face_blinking", "Face blinking", true),
@@ -471,7 +566,7 @@ const TOGGLES: [(&str, &str, bool); 6] = [
     ),
 ];
 const LOOKS: [&str; 10] = [
-    "auto", "neutral", "happy", "focused", "angry", "tired", "shut", "love", "afraid", "excited",
+    "auto", "neutral", "happy", "focused", "angry", "tired", "shut", "love", "scared", "excited",
 ];
 pub(super) fn settings_buttons(game: &Game<'_>, buttons: &mut Vec<String>) {
     for (key, label, default) in TOGGLES {
@@ -495,7 +590,7 @@ pub(super) fn settings_buttons(game: &Game<'_>, buttons: &mut Vec<String>) {
         game.native_setting(ID, "moves_face_expression")
             .unwrap_or_else(|| "auto".into())
     ));
-    buttons.push(status());
+    buttons.push(format!("Open face editor | {}", status()));
 }
 pub(super) fn settings_click(game: &Game<'_>, index: usize, back: bool) {
     if let Some(&(key, _, default)) = TOGGLES.get(index) {
@@ -542,6 +637,8 @@ pub(super) fn settings_click(game: &Game<'_>, index: usize, back: bool) {
             (index + 1) % LOOKS.len()
         };
         game.native_set_setting(ID, "moves_face_expression", LOOKS[next]);
+    } else if index == 9 && !back {
+        super::punchy_face_ui::open(game);
     }
 }
 pub(super) fn reset_settings(game: &Game<'_>) {
@@ -550,6 +647,7 @@ pub(super) fn reset_settings(game: &Game<'_>) {
     }
     for (key, value) in [
         ("moves_face_profile", "{}"),
+        ("moves_face_marks", ""),
         ("moves_face_expression", "auto"),
         ("moves_face_blink_seconds", "3.6"),
         ("moves_face_strength", "1"),

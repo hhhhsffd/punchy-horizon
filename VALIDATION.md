@@ -2,11 +2,51 @@
 
 ## 0.2.0 work in progress
 
-Full original-mod parity is not complete. The user authorized testing and
-publication on 2026-11-15, lifting the earlier testing hold. The results below
-apply to the pinned nightly on Windows GNU, not to arbitrary Horizon versions.
+Full original-mod parity is not established. The user authorized in-game testing
+and a GitHub update on 2026-11-15, lifting the implementation-only hold.
 
-### Current test pass — 2026-11-15
+### Facial/editor/swimming/elytra verification — 2026-11-16
+
+- `cargo test --locked`: 153 unit tests and the external Fluid & Foolish pack
+  integration test pass.
+- `cargo clippy --locked --all-targets -- -D warnings`: clean.
+- Formatting, Python script compilation and whitespace checks pass.
+- Combined Horizon `9f42064` / Spatial GUI 0.2.3 staging applies 85 injections,
+  23 support modules and one engine crate. The Windows GNU `fast` game build
+  succeeds. The upstream mimalloc C dependency emits GNU pragma/visibility
+  warnings; no mod Rust compiler warnings remain.
+- Standard-options runtime suite: **22/22 checks passed**. It covers the enabled
+  external pack, independent Moves/face switches, camera handoff, right-click
+  controls, equipped-elytra ground gait and changing wing attachment matrices,
+  authored swimming rotation and normal rotation after leaving water.
+- The face-editor checks cover pointer painting, undo/redo, right-click numeric
+  adjustment, save/reopen, reaction enables/priorities, named looks, custom
+  shape drawing/assignment, per-eye glow controls, PNG skin export and saved
+  profiles surviving an animation/resource reload.
+- Curved-options runtime suite: **23/23 checks passed**, including those same
+  scenarios with Spatial GUI enabled on options and explicit camera ownership.
+  The driver inverts the observed curved pointer mapping and sends ordinary
+  mouse events; it does not bypass the menu input path.
+- First-person/viewmodel regression suite: **17/17 checks passed**, including
+  real settings buttons, action sequences and persistence across game restart.
+- Runtime testing caught discarded decimal JSON reaction-priority values; the
+  loader now accepts numeric controls' whole-number floats, with round-trip
+  regression coverage. Screenshot inspection caught Spatial GUI stripping the
+  editor's fullscreen backdrop; the modal now uses two opaque background panels.
+- The 93-file bundle passes Horizon's `Bundle::read` parser. The prebuilt
+  executable includes this fork and Spatial GUI; Fluid & Foolish stays external.
+
+Local evidence: `reports/faces-movement-smoke.json`,
+`reports/faces-spatial-smoke.json` and `reports/punchy-final-smoke.json`, with logs
+and screenshots alongside them. All runs use new temporary homes and worlds.
+The packaged engine/support sources match the build stage.
+
+These regressions do not establish exact original-mod visual parity, every
+remote-player state, hat/equipment occlusion, trail appearance, landing from
+gliding or all third-party combinations. Those boundaries remain in
+PORTING_STATUS.md. The records below apply to earlier source states.
+
+### Earlier test pass — 2026-11-15
 
 - `cargo test --locked`: 147 unit tests passed.
 - With `PUNCHY_MOVES_PACK_ROOT` pointing to the separately installed Fluid &
@@ -54,8 +94,8 @@ The earlier results alone did **not** validate the current source. The facial ob
 per-frame skin lifecycle/emission hooks, accepted-use/attack capture, shallow
 water latching, semantic face channels, camera handoff and new support modules
 have since changed. Source inspection and formatting are not substitutes for
-compilation or in-game comparison. Current unit regression tests and both full
-runtime smoke scripts have now run on the combined executable.
+compilation or in-game comparison. The listed unit and smoke results cover the
+earlier executable and do not cover the later facial/editor/swimming/elytra work.
 
 Remaining validation: detailed original-mod visual comparison, resource reloads
 under animation, remote metadata/network states, complex action sequencing,

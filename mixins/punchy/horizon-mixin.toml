@@ -6,6 +6,13 @@ priority = 100
 [compatibility]
 horizon_revision = "9f42064c11efe7ef3e5ed2baad7ddc2a3b36eea0"
 
+[[injection]]
+id = "moves_faces_lights"
+kind = "HEAD"
+target = "horizon_client::game::native_hooks::Game<'_>::native_visuals"
+helper = "faces_lights.rs"
+bindings = [{ name="game", ty="&crate::game::Game<'_>", value="&*self" }, { name="lights", ty="&mut Vec<crate::game::native_hooks::NativeColoredLight>", value="&mut *lights" }]
+
 [[crate]]
 id = "engine"
 path = "engine"
@@ -63,6 +70,35 @@ id = "moves_runtime"
 file = "crates/horizon-client/src/game.rs"
 name = "punchy_moves"
 source = "moves_runtime.rs"
+
+[[module]]
+id = "moves_face_ui"
+file = "crates/horizon-client/src/game.rs"
+name = "punchy_face_ui"
+source = "moves_face_ui.rs"
+
+[[injection]]
+id = "face_editor_key"
+kind = "HEAD"
+cancellable = true
+target = "horizon_client::game::options::Game<'_>::options_key"
+helper = "face_editor_key.rs"
+bindings = [{ name="game", ty="&mut crate::game::Game<'_>", value="&mut *self" }, { name="key", ty="winit::keyboard::KeyCode", value="key" }]
+
+[[injection]]
+id = "face_editor_render"
+kind = "RETURN"
+target = "horizon_client::game::options::Game<'_>::draw_options"
+helper = "face_editor_render.rs"
+bindings = [{ name="game", ty="&crate::game::Game<'_>", value="&*self" }, { name="batch", ty="&mut horizon_client::hud::HudBatch", value="&mut *batch" }, { name="value", ty="()", value="$value" }]
+
+[[injection]]
+id = "face_editor_scroll"
+kind = "HEAD"
+cancellable = true
+target = "horizon_client::game::options::Game<'_>::options_scroll"
+helper = "face_editor_scroll.rs"
+bindings = [{ name="game", ty="&mut crate::game::Game<'_>", value="&mut *self" }, { name="amount", ty="f32", value="amount" }]
 
 [[module]]
 id = "moves_body"
@@ -301,6 +337,34 @@ id = "moves_faces"
 file = "crates/horizon-client/src/game.rs"
 name = "punchy_faces"
 source = "moves_faces.rs"
+
+[[injection]]
+id = "moves_swim_transform"
+kind = "HEAD"
+cancellable = true
+target = "horizon_client::mobs::render::base_transform_at"
+helper = "swim_transform.rs"
+bindings = [
+  { name="m", ty="&horizon_client::mobs::Mob", value="m" },
+  { name="alpha", ty="f32", value="alpha" },
+  { name="origin", ty="glam::Mat4", value="origin" }
+]
+
+[[injection]]
+id = "moves_elytra_pose"
+kind = "HEAD"
+cancellable = true
+target = "horizon_client::game::perspective::Game<'_>::player_elytra_geometry"
+helper = "elytra_pose.rs"
+bindings = [
+  { name="game", ty="&crate::game::Game<'_>", value="&*self" },
+  { name="m", ty="&horizon_client::mobs::Mob", value="m" },
+  { name="chest", ty="Option<&str>", value="chest" },
+  { name="camera", ty="glam::DVec3", value="camera" },
+  { name="partial", ty="f32", value="partial" },
+  { name="light", ty="u32", value="light" },
+  { name="out", ty="&mut Vec<horizon_client::mesher::Vertex>", value="&mut *out" }
+]
 
 [[module]]
 id = "moves_face_observer"

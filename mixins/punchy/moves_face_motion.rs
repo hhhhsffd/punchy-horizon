@@ -119,6 +119,7 @@ impl FaceForm {
 pub struct FaceExpression {
     pub name: String,
     pub forms: [FaceForm; 2],
+    pub shape_names: [Option<String>; 2],
     /// Channel order is exposed in `CHANNEL_NAMES`.
     pub parts: [f32; 21],
     pub blink_pace: Option<f32>,
@@ -130,6 +131,7 @@ impl Default for FaceExpression {
         Self {
             name: "neutral".into(),
             forms: [FaceForm::Open; 2],
+            shape_names: [None, None],
             parts: [0.0; 21],
             blink_pace: None,
             startle: 0,
@@ -512,6 +514,7 @@ impl FaceExpression {
     }
     pub fn mirrored(mut self) -> Self {
         self.forms.swap(0, 1);
+        self.shape_names.swap(0, 1);
         self.parts[5] = -self.parts[5];
         self.parts.swap(9, 10);
         self.parts.swap(18, 19);
@@ -546,17 +549,45 @@ impl FaceExpression {
         if let Some(x) = v["pupils"].as_array() {
             for i in 0..2 {
                 if let Some(n) = x.get(i).and_then(Value::as_f64) {
-                    e.parts[5 + i] = n as f32;
+                    e.parts[5 + i] = finite(n as f32, 0.0) * if i == 1 { -1.0 } else { 1.0 };
                 }
             }
         }
         if let Some(x) = v["form"].as_str() {
             e.forms = [FaceForm::parse(x); 2];
+            e.shape_names = [Some(super::library::key(x)), Some(super::library::key(x))];
         }
         for (i, key) in ["right_form", "left_form"].iter().enumerate() {
             if let Some(x) = v[key].as_str() {
                 e.forms[i] = FaceForm::parse(x);
+                e.shape_names[i] = Some(super::library::key(x));
             }
+        }
+        if let Some(eyes) = v.get("eyes") {
+            for side in 0..2 {
+                if let Some(name) = eyes
+                    .as_str()
+                    .or_else(|| eyes.get(side).and_then(Value::as_str))
+                {
+                    e.forms[side] = FaceForm::parse(name);
+                    e.shape_names[side] = Some(super::library::key(name));
+                }
+            }
+        }
+        for (key, index) in [("cheeks", 3), ("lid_right", 18), ("lid_left", 19)] {
+            if let Some(value) = v[key].as_f64() {
+                e.parts[index] = finite(value as f32, 0.).clamp(-4., 4.);
+            }
+        }
+        if let Some(brows) = v["brows"].as_array() {
+            for side in 0..2 {
+                if let Some(value) = brows.get(side).and_then(Value::as_f64) {
+                    e.parts[9 + side] = finite(value as f32, 0.);
+                }
+            }
+        }
+        if let Some(blink) = v["blink"].as_f64() {
+            e.blink_pace = Some(finite(blink as f32, 1.).clamp(0., 8.));
         }
         if let Some(x) = v["blinks"].as_f64().or_else(|| v["blink_pace"].as_f64()) {
             e.blink_pace = Some((x as f32).clamp(0.0, 8.0));
@@ -565,6 +596,11 @@ impl FaceExpression {
     }
     pub fn to_json(&self) -> Value {
         let mut v = json!({"right_form":self.forms[0].name(),"left_form":self.forms[1].name(),"blinks":self.blink_pace});
+        for (side, key) in ["right_form", "left_form"].into_iter().enumerate() {
+            if let Some(shape) = &self.shape_names[side] {
+                v[key] = json!(shape);
+            }
+        }
         for (i, key) in CHANNEL_NAMES.iter().enumerate() {
             v[*key] = json!(self.parts[i]);
         }
@@ -572,6 +608,50 @@ impl FaceExpression {
     }
     pub fn names() -> &'static [&'static str] {
         &LOOK_NAMES
+    }
+    pub fn known(name: &str) -> bool {
+        LOOK_NAMES.contains(&name)
+            || [
+                "calm",
+                "cross",
+                "narrow",
+                "intent",
+                "startled",
+                "glum",
+                "uneasy",
+                "cheery",
+                "aghast",
+                "hurting",
+                "drowsy",
+                "laugh",
+                "angry",
+                "wink_left",
+                "flutter",
+                "glance_left",
+                "glance_right",
+                "startle",
+                "startle_shock",
+            ]
+            .contains(&name)
+    }
+}
+
+#[cfg(test)]
+mod custom_look_tests {
+    use super::*;
+    #[test]
+    fn external_look_axes_and_eye_shapes_survive_roundtrip_and_mirroring() {
+        let e = FaceExpression::from_json(
+            "custom",
+            &json!({"pupils":[0.4,0.3],
+            "eyes":["wide_star","small_star"],"brows":[0.1,0.7],"blink":0.5}),
+        );
+        assert_eq!(e.parts[5], 0.4);
+        assert_eq!(e.parts[6], -0.3);
+        let mirrored = e.clone().mirrored();
+        assert_eq!(mirrored.shape_names[0].as_deref(), Some("small_star"));
+        assert_eq!(mirrored.parts[5], -0.4);
+        assert_eq!(FaceExpression::from_json("custom", &e.to_json()), e);
     }
 }
 
@@ -681,7 +761,7 @@ impl FacePersonality {
         p.rest = v["rest"].as_str().unwrap_or("neutral").into();
         p.blush = v["blush"].as_f64().unwrap_or(0.0).clamp(0.0, 1.0) as f32;
         if let Some(o) = v["swaps"].as_object() {
-            for (a, b) in o.iter().take(24) {
+            for (a, b) in o.iter().take(128) {
                 if let Some(b) = b.as_str() {
                     p.swaps.insert(a.clone(), b.into());
                 }
@@ -856,10 +936,14 @@ impl FaceConditions {
     pub fn reaction_names() -> Vec<&'static str> {
         REACTIONS.iter().map(|r| r.0).collect()
     }
+    pub fn reaction_priority(id: &str) -> i32 {
+        REACTIONS.iter().find(|r| r.0 == id).map_or(0, |r| r.2)
+    }
 }
 #[derive(Clone, Debug)]
 pub struct FaceFrame {
     pub forms: [FaceForm; 2],
+    pub shape_names: [Option<String>; 2],
     pub lids: [f32; 2],
     pub lower: f32,
     pub smile: f32,
@@ -881,6 +965,7 @@ impl Default for FaceFrame {
     fn default() -> Self {
         Self {
             forms: [FaceForm::Open; 2],
+            shape_names: [None, None],
             lids: [0.0; 2],
             lower: 0.0,
             smile: 0.0,
@@ -1047,6 +1132,8 @@ pub(super) struct FaceMemory {
     initialized: bool,
     shown: [FaceForm; 2],
     coming: [FaceForm; 2],
+    shown_shapes: [Option<String>; 2],
+    coming_shapes: [Option<String>; 2],
     switch_start: [Option<f32>; 2],
     last_look: Option<(f32, f32, f32)>,
     turned_at: f32,
@@ -1073,6 +1160,8 @@ impl Default for FaceMemory {
             initialized: false,
             shown: [FaceForm::Open; 2],
             coming: [FaceForm::Open; 2],
+            shown_shapes: [None, None],
+            coming_shapes: [None, None],
             switch_start: [None; 2],
             last_look: None,
             turned_at: f32::NEG_INFINITY,
@@ -1431,7 +1520,12 @@ impl FaceMemory {
         }
         let mut result = None;
         let mut pace = None;
-        for &(id, name, priority) in REACTIONS {
+        let mut reactions = REACTIONS.to_vec();
+        reactions.sort_by_key(|(id, _, priority)| {
+            std::cmp::Reverse(s.trigger_priorities.get(*id).copied().unwrap_or(*priority))
+        });
+        for (id, name, priority) in reactions {
+            let priority = s.trigger_priorities.get(id).copied().unwrap_or(priority);
             if !s.reaction_enabled(id) || !self.active(id, c, t, s) {
                 continue;
             }
@@ -1632,9 +1726,11 @@ impl FaceMemory {
                 pupil[1] -= 0.35 * t;
                 if e.startle == 2 {
                     e.forms = [FaceForm::Blank; 2];
+                    e.shape_names = [None, None];
                 }
             } else if hurt < 11.0 {
                 e.forms = [FaceForm::Press; 2];
+                e.shape_names = [None, None];
             }
         }
         let pace = e.blink_pace.unwrap_or(1.0);
@@ -1648,23 +1744,27 @@ impl FaceMemory {
             lid.max(beat).max(p[19]).clamp(0.0, 1.0),
         ];
         for (i, lid) in lids.iter_mut().enumerate() {
-            if e.forms[i] != self.coming[i] {
+            if e.forms[i] != self.coming[i] || e.shape_names[i] != self.coming_shapes[i] {
                 if let Some(start) = self.switch_start[i]
                     && age - start >= 1.0
                 {
                     self.shown[i] = self.coming[i];
+                    self.shown_shapes[i] = self.coming_shapes[i].clone();
                 }
                 self.coming[i] = e.forms[i];
-                self.switch_start[i] = if e.forms[i] != self.shown[i] {
-                    Some(age)
-                } else {
-                    None
-                };
+                self.coming_shapes[i] = e.shape_names[i].clone();
+                self.switch_start[i] =
+                    if e.forms[i] != self.shown[i] || e.shape_names[i] != self.shown_shapes[i] {
+                        Some(age)
+                    } else {
+                        None
+                    };
             }
             if let Some(start) = self.switch_start[i] {
                 let t = (age - start) / 2.0;
                 if t >= 1.0 {
                     self.shown[i] = self.coming[i];
+                    self.shown_shapes[i] = self.coming_shapes[i].clone();
                     self.switch_start[i] = None;
                 } else {
                     let form = if t < 0.5 {
@@ -1673,7 +1773,16 @@ impl FaceMemory {
                         self.coming[i]
                     };
                     e.forms[i] = form;
-                    if !form.closed() {
+                    e.shape_names[i] = if t < 0.5 {
+                        self.shown_shapes[i].clone()
+                    } else {
+                        self.coming_shapes[i].clone()
+                    };
+                    let closed = e.shape_names[i]
+                        .as_ref()
+                        .and_then(|id| s.shapes.get(id))
+                        .map_or_else(|| form.closed(), |shape| shape.closed);
+                    if !closed {
                         *lid = lid.max(if t < 0.5 { t * 2.0 } else { (1.0 - t) * 2.0 });
                     }
                 }
@@ -1685,6 +1794,7 @@ impl FaceMemory {
         }
         FaceFrame {
             forms: e.forms,
+            shape_names: e.shape_names,
             lids,
             lower: lower.clamp(0.0, 1.0),
             smile: p[3].clamp(0.0, 1.0),

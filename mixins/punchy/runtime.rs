@@ -910,6 +910,7 @@ pub(super) fn render_gui(
     gui_hidden: bool,
     _focused: bool,
 ) {
+    super::punchy_face_ui::lifecycle(game);
     if !enabled(game) || gui_hidden || game.screen != Screen::Playing || game.screen_over_playing()
     {
         return;

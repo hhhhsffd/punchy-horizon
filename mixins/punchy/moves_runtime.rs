@@ -402,6 +402,12 @@ pub(super) fn frame(game: &mut Game<'_>) {
                 "warnings":s.pack.warnings,"camera_claimed":s.camera_claimed,
                 "pose_owned":game.player_model.as_ref().and_then(|m|m.emote.as_ref()).is_some_and(is_ours),
                 "layers":s.controller.frame.layers.iter().map(|l|l.clip.name.as_str()).collect::<Vec<_>>(),
+                "movement_state":s.controller.state.key(),
+                "grounded":s.previous.as_ref().map(|i|i.grounded),
+                "fall_flying":s.previous.as_ref().map(|i|i.elytra),
+                "gait_phase":s.controller.gait_phase(),
+                "elytra_equipped":game.armor[1].as_ref().is_some_and(|stack|stack.item.as_ref()=="minecraft:elytra"),
+                "suppress_vanilla_swim":s.controller.frame.suppress_vanilla_swim,
                 "camera":super::punchy_camera::diagnostic(),
                 "faces":super::punchy_faces::diagnostic(game)})
         });

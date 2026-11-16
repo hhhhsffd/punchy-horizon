@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.0
+
+- Add native Rust Moves body animations and shoulder/orbit camera, with separate
+  master, body, camera and facial switches and external Fluid & Foolish support.
+- Add layered facial animation, custom shapes/looks/reactions, per-eye glow,
+  visual lights and trails, and an in-game editor with undo/redo, saved profiles
+  and explicit PNG export.
+- Prevent vanilla swimming rotation from being applied over authored swim poses.
+- Make equipped elytra follow the animated torso and root while walking.
+- Preserve Spatial GUI camera/pointer ownership and add right-click decrease,
+  reverse selection and back navigation in settings.
+- Target Horizon nightly `9f42064` (Minecraft 26.3). See VALIDATION.md for the
+  tested scope and PORTING_STATUS.md for remaining parity limitations.
+
 ## 0.1.8
 
 - In-Game Live HUD Editor (F9):

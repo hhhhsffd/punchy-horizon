@@ -4,6 +4,9 @@ fn punchy_settings_mouse(
     right: bool,
 ) -> core::ops::ControlFlow<Result<()>> {
     use horizon_client::options_ui::Page;
+    if crate::game::punchy_face_ui::mouse(game, pressed, right) {
+        return core::ops::ControlFlow::Break(Ok(()));
+    }
     if !right || !pressed || game.ui.options.punchy_binding_active() {
         return core::ops::ControlFlow::Continue(());
     }

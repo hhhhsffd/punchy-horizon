@@ -9,12 +9,17 @@ import shutil
 import subprocess
 import tempfile
 import time
+import traceback
 
 p = argparse.ArgumentParser(description=__doc__)
 for name in ("binary", "ctl", "resources", "pack", "report"):
     p.add_argument("--" + name, type=Path, required=True)
+p.add_argument("--swimming", action="store_true", help="also exercise authored underwater swimming")
+p.add_argument("--elytra", action="store_true", help="also exercise grounded walking with elytra equipped")
+p.add_argument("--faces", action="store_true", help="also exercise the integrated face editor and exports")
+p.add_argument("--spatial-options", action="store_true", help="exercise settings inside Spatial GUI's captured options surface")
 a = p.parse_args()
-for name in vars(a):
+for name in ("binary", "ctl", "resources", "pack", "report"):
     setattr(a, name, getattr(a, name).resolve())
 root = Path(tempfile.mkdtemp(prefix="punchy-moves-smoke-"))
 game = root / "game"
@@ -22,6 +27,11 @@ game.mkdir()
 shutil.copytree(a.pack, game / "resourcepacks/FluidAndFoolish")
 (game / "options.txt").write_text('enableVsync:false\nmaxFps:60\npauseOnLostFocus:false\nguiScale:2\nresourcePacks:["vanilla","file/FluidAndFoolish"]\n')
 (game / "horizon-graphics.txt").write_text("lodDistance:0\nhdr:false\npickedShaderPack:\n")
+if a.spatial_options:
+    (game / "config").mkdir()
+    (game / "config/spatial-gui.json5").write_text(json.dumps({
+        "allScreens": True, "disableThirdPersonParallax": True,
+    }))
 env = dict(os.environ)
 for key, folder in [("HORIZON_HOME", "home"), ("HORIZON_LAUNCHER_HOME", "launcher"),
     ("XDG_DATA_HOME", "data"), ("XDG_CONFIG_HOME", "config"),
@@ -38,7 +48,7 @@ result = {"scratch": str(root), "checks": {}}
 log = a.report.with_suffix(".log").open("w")
 process = None
 
-def ctl(*args):
+def raw_ctl(*args):
     r = subprocess.run([str(a.ctl), "--socket", str(socket), "--timeout", "40", *map(str, args)],
         env=env, capture_output=True, text=True, timeout=50)
     if r.returncode:
@@ -60,16 +70,58 @@ def observe(seconds=0.3):
         raise RuntimeError("no Moves diagnostic")
     return latest
 
+def projected_point(x, y):
+    """Invert the live curved-menu pointer mapping without bypassing input."""
+    width, height = raw_ctl("ui")["gui_size"]
+    guess = [width / 2, height / 2]
+    def sample(point):
+        # Zero wheel steps moves the real pointer without changing a setting.
+        raw_ctl("scroll-at", *point, 0)
+        return observe(0.12)["faces"]["pointer"]
+    for _ in range(8):
+        mapped = sample(guess)
+        error = [x - mapped[0], y - mapped[1]]
+        if max(map(abs, error)) < 0.6:
+            return guess
+        dx = sample([guess[0] + 2, guess[1]])
+        dy = sample([guess[0], guess[1] + 2])
+        a, b = (dx[0] - mapped[0]) / 2, (dy[0] - mapped[0]) / 2
+        c, d = (dx[1] - mapped[1]) / 2, (dy[1] - mapped[1]) / 2
+        determinant = a * d - b * c
+        assert abs(determinant) > 1e-5, (guess, mapped, dx, dy)
+        step = [(d * error[0] - b * error[1]) / determinant,
+                (a * error[1] - c * error[0]) / determinant]
+        guess = [max(0, min(width - 0.01, guess[0] + step[0])),
+                 max(0, min(height - 0.01, guess[1] + step[1]))]
+    raise AssertionError(f"projected pointer did not reach {(x, y)}: {mapped}")
+
+def ctl(*args):
+    if a.spatial_options and args[0] in ("click", "click-at", "scroll-at"):
+        ui = raw_ctl("ui")
+        if ui["screen"] == "options" and observe(0.08)["camera_claimed"]:
+            if args[0] == "click":
+                node = next(n for n in ui["widgets"] if n["id"] == args[1])
+                x, y, width, height = node["bounds"]
+                point = projected_point(x + width / 2, y + height / 2)
+                return raw_ctl("click-at", *point, *args[2:])
+            point = projected_point(float(args[1]), float(args[2]))
+            return raw_ctl(args[0], *point, *args[3:])
+    return raw_ctl(*args)
+
 def find(prefix):
     ui = ctl("ui")
     w, h = ui["gui_size"]
-    ctl("scroll-at", w / 2, h / 2, 50)
-    for _ in range(24):
+    def visible(nodes):
+        return next((node for node in nodes if (node.get("label") or "").startswith(prefix)
+                     and 38 < node["bounds"][1] + node["bounds"][3] / 2 < h - 38), None)
+    if node := visible(ui["widgets"]):
+        return node
+    ctl("scroll-at", w / 2, h / 2, 250)
+    for _ in range(80):
         ui = ctl("ui")
-        for node in ui["widgets"]:
-            if (node.get("label") or "").startswith(prefix) and 38 < node["bounds"][1] + node["bounds"][3] / 2 < h - 38:
-                return node
-        ctl("scroll-at", w / 2, h / 2, -2)
+        if node := visible(ui["widgets"]):
+            return node
+        ctl("scroll-at", w / 2, h / 2, -6)
     raise AssertionError("missing widget " + prefix)
 
 def play():
@@ -110,6 +162,52 @@ try:
     face = observe()["faces"]["own"]
     assert face and face["eyes"] > 0 and face["animated"] and face["uploaded"], face
     result["checks"]["in_game_face_skin_uploaded"] = True
+    if a.elytra:
+        ctl("command", "item replace entity @s armor.chest with minecraft:elytra")
+        ctl("command", "tp @s 0 89 0 0 0")
+        observe(1.2)  # allow the one-shot equipment reaction to finish
+        ctl("key", "w", "down")
+        before = observe(0.4)
+        after = observe(0.25)
+        ctl("release")
+        assert after["elytra_equipped"] and after["pose_owned"], after
+        assert after["grounded"] and after["movement_state"] == "ground", after
+        assert after["gait_phase"] != before["gait_phase"], (before, after)
+        # Fluid & Foolish names the normal forward gait "normal_forward".
+        assert "normal_forward" in after["layers"], after
+        assert not any(name.startswith("elytra_") for name in after["layers"]), after
+        first = before["faces"]["own"]["wing_delta"]
+        last = after["faces"]["own"]["wing_delta"]
+        assert first is not None and last is not None, (before, after)
+        assert any(abs(a - b) > 1e-5 for a, b in zip(first, last)), (first, last)
+        ctl("screenshot", a.report.parent / "moves-elytra-walking.png")
+        result["checks"]["equipped_elytra_keeps_grounded_walking_animated"] = True
+        result["checks"]["elytra_wing_anchor_follows_torso_animation"] = True
+        ctl("command", "item replace entity @s armor.chest with minecraft:air")
+        ctl("command", "tp @s 0 89 0 0 0")
+        observe(0.8)
+    if a.swimming:
+        ctl("command", "fill -8 88 -8 8 94 14 water")
+        ctl("command", "gamemode survival")
+        ctl("command", "tp @s 0 90 0 0 0")
+        ctl("key", "w", "down")
+        ctl("key", "ctrl", "down")
+        d = observe(1.5)
+        ctl("release")
+        assert d["suppress_vanilla_swim"], d
+        assert any(name.startswith("swimming_") for name in d["layers"]), d
+        ctl("screenshot", a.report.parent / "moves-swimming.png")
+        ctl("key", "f5", "tap")
+        observe(0.5)
+        ctl("screenshot", a.report.parent / "moves-swimming-front.png")
+        ctl("key", "v", "tap")
+        result["checks"]["authored_swimming_suppresses_duplicate_outer_rotation"] = True
+        ctl("command", "gamemode creative")
+        ctl("command", "fill -8 88 -8 8 94 14 air")
+        ctl("command", "fill -4 88 -4 4 88 4 stone")
+        ctl("command", "tp @s 0 89 0 0 0")
+        assert not observe(1)["suppress_vanilla_swim"]
+        result["checks"]["leaving_water_restores_normal_outer_rotation"] = True
     ctl("key", "e", "tap")
     d = observe(1)
     assert not d["pose_owned"] and d["camera_claimed"], d
@@ -150,12 +248,21 @@ try:
     play()
     assert observe(2)["enabled"] and observe()["pose_owned"]
     result["checks"]["moves_master_toggle"] = True
+    if a.faces:
+        from face_editor_smoke import check_face_editor
+        check_face_editor(ctl, observe, find, play, game, a.report, result, a.spatial_options)
     ctl("quit")
     process.wait(timeout=30)
     process = None
     result["success"] = True
 except Exception as error:
-    result.update(success=False, error=str(error))
+    result.update(success=False, error=str(error), traceback=traceback.format_exc())
+    if process is not None and process.poll() is None:
+        try:
+            result["failure_ui"] = ctl("ui")
+            ctl("screenshot", a.report.with_suffix(".failure.png"))
+        except Exception:
+            pass
 finally:
     if process is not None and process.poll() is None:
         process.terminate()

@@ -15,12 +15,15 @@ use std::collections::BTreeMap;
 mod detect;
 #[path = "moves_face_editor.rs"]
 mod editor;
+#[path = "moves_face_library.rs"]
+mod library;
 #[path = "moves_face_metadata.rs"]
 mod metadata;
 #[path = "moves_face_motion.rs"]
 mod motion;
 #[path = "moves_face_render.rs"]
 mod render;
+pub use library::{FaceGrid, FaceLibrary, FaceShape};
 
 pub use detect::{Brow, Eye, FaceRig, SkinGrid};
 pub use editor::{
@@ -92,6 +95,8 @@ pub struct FaceSettings {
     pub reactions: BTreeMap<String, bool>,
     pub trigger_looks: BTreeMap<String, String>,
     pub custom_looks: BTreeMap<String, FaceExpression>,
+    pub shapes: BTreeMap<String, FaceShape>,
+    pub trigger_priorities: BTreeMap<String, i32>,
 }
 impl Default for FaceSettings {
     fn default() -> Self {
@@ -122,6 +127,8 @@ impl Default for FaceSettings {
             reactions: BTreeMap::new(),
             trigger_looks: BTreeMap::new(),
             custom_looks: BTreeMap::new(),
+            shapes: BTreeMap::new(),
+            trigger_priorities: BTreeMap::new(),
         }
     }
 }
@@ -233,6 +240,24 @@ impl FaceSettings {
                     .insert(k.clone(), FaceExpression::from_json(k, x));
             }
         }
+        if let Some(shapes) = v["shapes"].as_object() {
+            for (id, value) in shapes.iter().take(512) {
+                if let Ok(shape) = FaceShape::from_json(value) {
+                    s.shapes.insert(library::key(id), shape);
+                }
+            }
+        }
+        if let Some(priorities) = v["trigger_priorities"].as_object() {
+            for (id, value) in priorities {
+                // Native numeric controls emit JSON floats, even for whole steps.
+                if let Some(priority) = value.as_f64().filter(|value| value.is_finite()) {
+                    s.trigger_priorities.insert(
+                        id.clone(),
+                        priority.round().clamp(i32::MIN as f64, i32::MAX as f64) as i32,
+                    );
+                }
+            }
+        }
         s.normalize();
         s
     }
@@ -254,6 +279,8 @@ impl FaceSettings {
             "personality": self.personality.id,
             "personalities": {self.personality.id.clone(): self.personality.to_json()},
             "reactions": self.reactions, "trigger_looks": self.trigger_looks,
+            "trigger_priorities":self.trigger_priorities,
+            "shapes":self.shapes.iter().map(|(id,shape)|(id.clone(),shape.to_json())).collect::<BTreeMap<_,_>>(),
             "looks": self.custom_looks.iter().map(|(k,v)| (k.clone(),v.to_json())).collect::<BTreeMap<_,_>>()
         });
         if let (Some(a), Some(b)) = (v.as_object_mut(), light_json(&self.lights[1]).as_object()) {
@@ -297,6 +324,8 @@ pub struct FaceOutput {
     pub height: u32,
     /// Complete original skin with this frame's facial replacements.
     pub rgba: Vec<u8>,
+    /// Stable erased eye/brow backings for hosts rendering the animated quads.
+    pub geometry_skin: Vec<u8>,
     /// Sparse replacement pixels: alpha 0 means unchanged.
     pub overlay: Vec<u8>,
     /// Linear intensity is additionally available through `glow_anchors`.
@@ -381,6 +410,12 @@ impl FaceEngine {
         self.rig = detect::detect(&self.grid, self.settings.hat_layer, None);
         self.detected_hat_layer = self.settings.hat_layer;
     }
+    /// Resetting a local editor override restores the skin owner's embedded
+    /// rig, if present; it must not silently replace it with auto-detection.
+    pub fn restore_embedded_marks(&mut self) {
+        let marks = metadata::read_grid(&self.grid).map(|metadata| metadata.marks);
+        self.set_marks(marks.as_ref());
+    }
     pub fn reset_animation(&mut self) {
         self.memory = motion::FaceMemory::default();
     }
@@ -402,6 +437,7 @@ impl FaceEngine {
             width: self.width,
             height: self.height,
             rgba: self.source.clone(),
+            geometry_skin: self.source.clone(),
             overlay: vec![0; self.source.len()],
             emission: vec![0; self.source.len()],
             quads: Vec::new(),
@@ -508,7 +544,8 @@ mod tests {
     #[test]
     fn settings_json_round_trip_and_validation() {
         let mut s = FaceSettings::from_json(&json!({"blink_seconds": 90, "expression_strength": 0,
-            "glow": {"pupils": true}, "personality": "cute", "line_color": "#123456"}));
+            "glow": {"pupils": true}, "personality": "cute", "line_color": "#123456",
+            "trigger_priorities": {"fading": 1200.0, "doze": 1180}}));
         assert_eq!(s.blink_seconds, 8.0);
         assert_eq!(s.expression_strength, 0.25);
         assert_eq!(s.lights[0].parts, GLOW_PUPILS);
@@ -516,6 +553,8 @@ mod tests {
         let decoded = FaceSettings::from_json(&s.to_json());
         assert_eq!(decoded.lid_colors, s.lid_colors);
         assert_eq!(decoded.personality.id, "cute");
+        assert_eq!(decoded.trigger_priorities["fading"], 1200);
+        assert_eq!(decoded.trigger_priorities["doze"], 1180);
     }
     #[test]
     fn invalid_skin_is_rejected_before_allocation() {

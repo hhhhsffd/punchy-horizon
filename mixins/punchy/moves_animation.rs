@@ -50,6 +50,7 @@ pub struct Input {
     pub crawling: bool,
     pub climbing: bool,
     pub flying: bool,
+    /// Actual fall-flying flag, never inferred from chest equipment.
     pub elytra: bool,
     pub riding: Option<String>,
     pub cold: bool,
@@ -482,6 +483,8 @@ impl Layer {
 
 #[derive(Clone, Debug, Default)]
 pub struct Frame {
+    /// The authored water clips already rotate the whole avatar horizontally.
+    pub suppress_vanilla_swim: bool,
     pub layers: Vec<Layer>,
     pub tilt: [f32; 2],
     pub previous_tilt: [f32; 2],
@@ -731,6 +734,9 @@ pub struct Controller {
     pose_item: String,
 }
 impl Controller {
+    pub fn gait_phase(&self) -> f32 {
+        self.gait.phase
+    }
     pub fn stop_emote(&mut self) {
         if self.emote_name.take().is_some() {
             self.emote.stop(0.12);
@@ -2597,6 +2603,15 @@ impl Controller {
             _ => {}
         }
         self.frame = Frame {
+            suppress_vanilla_swim: (self.state == State::Swim || i.swimming && i.in_water)
+                && layers
+                    .iter()
+                    .any(|layer| layer.owns("root") && layer.render_weight(1.) > 0.00001)
+                && ["surface", "underwater", "vertical"].iter().any(|field| {
+                    pack.entry("GENERAL", "swimming")[*field]
+                        .as_str()
+                        .is_some_and(|name| pack.resolve(name, false).is_some())
+                }),
             layers,
             tilt,
             previous_tilt,
@@ -2833,6 +2848,20 @@ mod tests {
     #[test]
     fn swimming_freezes_without_intent_and_changes_clips_without_resetting_phase() {
         let mut p = pack();
+        Arc::make_mut(p.clips.get_mut("idle").unwrap())
+            .tracks
+            .insert(
+                "root".into(),
+                crate::load_model_clips(
+                    br#"{"animations":{"swim_root":{"bones":{"root":{"rotation":[90,0,0]}}}}}"#,
+                )
+                .unwrap()
+                .remove("swim_root")
+                .unwrap()
+                .tracks
+                .remove("root")
+                .unwrap(),
+            );
         p.config["defaults"]["animations"]["swimming"] = serde_json::json!({
             "surface":"idle","underwater":"walk","vertical":"idle"
         });
@@ -2846,6 +2875,7 @@ mod tests {
             c.tick(&p, &i);
         }
         assert_eq!(c.state, State::Swim);
+        assert!(c.frame.suppress_vanilla_swim);
         assert_eq!(c.base.playback.current[0].time, 0.);
         i.speed = 0.1;
         i.movement = [0., 1.];
@@ -2867,6 +2897,11 @@ mod tests {
             c.tick(&p, &i);
         }
         assert!(c.base.playback.current[0].rate < 0.);
+        i.swimming = false;
+        i.in_water = false;
+        i.grounded = true;
+        c.tick(&p, &i);
+        assert!(!c.frame.suppress_vanilla_swim);
     }
     #[test]
     fn creative_flight_uses_analog_diagonals_and_backward_tilt() {

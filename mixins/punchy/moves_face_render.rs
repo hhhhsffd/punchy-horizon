@@ -11,8 +11,61 @@ struct Canvas<'a> {
     engine: &'a FaceEngine,
     out: &'a mut FaceOutput,
     opacity: f32,
+    geometry: bool,
+    depth: f32,
 }
 impl Canvas<'_> {
+    // Keep fractional geometry separate from the compatibility skin raster.
+    // Split at head seams so a quad can never bridge two perpendicular planes.
+    fn piece(
+        &mut self,
+        bounds: [f32; 4],
+        hat: bool,
+        color: Rgba,
+        alpha: f32,
+        emission: Option<Rgba>,
+    ) {
+        if !self.geometry {
+            return;
+        }
+        let [left, top, right, bottom] = bounds;
+        let top = top.max(0.);
+        let bottom = bottom.min(8.);
+        if bottom <= top {
+            return;
+        }
+        let mut color = color;
+        color[3] = (color[3] as f32 * alpha * self.opacity)
+            .clamp(0., 255.)
+            .round() as u8;
+        if color[3] == 0 {
+            return;
+        }
+        for (lo, hi) in [(-8_f32, 0_f32), (0., 8.), (8., 16.)] {
+            let l = left.max(lo);
+            let r = right.min(hi);
+            if r <= l {
+                continue;
+            }
+            let middle = (l + r) * 0.5;
+            let (a, normal) = surface_in_face(l, top, hat, middle);
+            let (b, _) = surface_in_face(r, top, hat, middle);
+            let (c, _) = surface_in_face(r, bottom, hat, middle);
+            let (d, _) = surface_in_face(l, bottom, hat, middle);
+            let positions =
+                [a, d, c, b].map(|p| std::array::from_fn(|i| p[i] + normal[i] * self.depth));
+            let mut emission = emission.unwrap_or([0; 4]);
+            emission[3] = (emission[3] as f32 * alpha * self.opacity)
+                .clamp(0., 255.)
+                .round() as u8;
+            self.out.quads.push(FaceQuad {
+                positions,
+                normal,
+                color,
+                emission,
+            });
+        }
+    }
     fn original(&self, x: f32, y: f32, hat: bool) -> Rgba {
         if !inside(x.floor() as i32, y.floor() as i32) {
             return [0; 4];
@@ -22,6 +75,27 @@ impl Canvas<'_> {
         let py = (8.0 + y) * scale;
         let i = (py.floor() as usize * self.engine.width as usize + px.floor() as usize) * 4;
         self.engine.source[i..i + 4].try_into().unwrap_or([0; 4])
+    }
+    fn backing(&mut self, x: f32, y: f32, w: f32, h: f32, hat: bool, color: Rgba) {
+        // The body skin contains only stable backings. Animated pixels belong
+        // to the fractional mesh; drawing them twice leaves raster fringes.
+        self.rect(x, y, w, h, hat, color, 1., None);
+        let scale = self.engine.grid.scale as f32;
+        for py in (y * scale).floor() as i32..((y + h) * scale).ceil() as i32 {
+            for px in (x * scale).floor() as i32..((x + w) * scale).ceil() as i32 {
+                if px < -8 * scale as i32
+                    || px >= 16 * scale as i32
+                    || py < 0
+                    || py >= 8 * scale as i32
+                {
+                    continue;
+                }
+                let u = (if hat { 40 } else { 8 }) * scale as i32 + px;
+                let v = 8 * scale as i32 + py;
+                let i = (v as usize * self.engine.width as usize + u as usize) * 4;
+                self.out.geometry_skin[i..i + 4].copy_from_slice(&color);
+            }
+        }
     }
     fn paint(&mut self, x: i32, y: i32, hat: bool, c: Rgba, coverage: f32, emission: Option<Rgba>) {
         let scale = self.engine.grid.scale as i32;
@@ -65,6 +139,7 @@ impl Canvas<'_> {
         alpha: f32,
         emission: Option<Rgba>,
     ) {
+        self.piece([x, y, x + w, y + h], hat, c, alpha, emission);
         let scale = self.engine.grid.scale as f32;
         let left = (x * scale).floor() as i32;
         let right = ((x + w) * scale).ceil() as i32;
@@ -142,6 +217,8 @@ pub(super) fn draw(engine: &FaceEngine, conditions: &FaceConditions, out: &mut F
         engine,
         out,
         opacity: super::finite(conditions.opacity, 1.0).clamp(0.0, 1.0),
+        geometry: conditions.quads,
+        depth: 0.,
     };
     for e in &engine.rig.eyes {
         draw_eye(&mut canvas, conditions, e);
@@ -160,6 +237,27 @@ pub(super) fn draw(engine: &FaceEngine, conditions: &FaceConditions, out: &mut F
         let x = e.col as f32 + e.width as f32 * 0.5;
         let y = e.row as f32 + e.height as f32 * 0.5;
         let (position, _) = surface(x, y, e.hat || engine.settings.over_hat);
+        // A shut iris must not leave bloom, trails or a light floating over its
+        // opaque eyelid. Sample the final emission mask in that eye's region.
+        let scale = engine.grid.scale as i32;
+        let mut visible = 0_u32;
+        let mut area = 0_u32;
+        let rise = if light.parts & GLOW_BROWS != 0 { 3 } else { 1 };
+        for row in (e.row - rise).max(0) * scale..(e.row + e.height + 1).min(8) * scale {
+            for col in (e.col - 1).max(-8) * scale..(e.col + e.width + 1).min(16) * scale {
+                let u = (if e.hat || engine.settings.over_hat {
+                    40
+                } else {
+                    8
+                }) * scale
+                    + col;
+                let v = 8 * scale + row;
+                let i = (v as usize * engine.width as usize + u as usize) * 4;
+                visible += u32::from(canvas.out.emission[i + 3]);
+                area += 1;
+            }
+        }
+        let coverage = (visible as f32 / (255. * area.max(1) as f32) * 4.).min(1.);
         let pulse = if engine.settings.glow_pulse {
             0.75 + 0.25 * (conditions.time_seconds * 2.0).sin()
         } else {
@@ -168,40 +266,11 @@ pub(super) fn draw(engine: &FaceEngine, conditions: &FaceConditions, out: &mut F
         canvas.out.glow_anchors.push(GlowAnchor {
             position,
             color: light.color.unwrap_or(e.iris),
-            strength: engine.settings.glow_strength * pulse,
+            strength: engine.settings.glow_strength * pulse * coverage,
             effects: light.effects,
             effect_strengths: light.strengths,
             trail_color: light.trail_color.or(light.color).unwrap_or(e.iris),
         });
-    }
-    if conditions.quads {
-        let scale = engine.grid.scale;
-        for hat in [false, true] {
-            for y in 0..8 * scale {
-                for x in -8 * (scale as i32)..16 * (scale as i32) {
-                    let u = (if hat { 40 * scale } else { 8 * scale }) as i32 + x;
-                    let i = ((8 * scale + y) * engine.width as usize + u as usize) * 4;
-                    if canvas.out.overlay[i + 3] == 0 {
-                        continue;
-                    }
-                    let color = canvas.out.rgba[i..i + 4].try_into().unwrap();
-                    let emission = canvas.out.emission[i..i + 4].try_into().unwrap();
-                    let left = x as f32 / scale as f32;
-                    let top = y as f32 / scale as f32;
-                    let d = 1.0 / scale as f32;
-                    let (a, normal) = surface(left, top, hat);
-                    let (b, _) = surface_in_face(left + d, top, hat, left + d * 0.5);
-                    let (cc, _) = surface_in_face(left + d, top + d, hat, left + d * 0.5);
-                    let (dd, _) = surface_in_face(left, top + d, hat, left + d * 0.5);
-                    canvas.out.quads.push(FaceQuad {
-                        positions: [a, b, cc, dd],
-                        normal,
-                        color,
-                        emission,
-                    });
-                }
-            }
-        }
     }
 }
 fn surface(x: f32, y: f32, hat: bool) -> ([f32; 3], [f32; 3]) {
@@ -209,16 +278,19 @@ fn surface(x: f32, y: f32, hat: bool) -> ([f32; 3], [f32; 3]) {
 }
 fn surface_in_face(x: f32, y: f32, hat: bool, face_x: f32) -> ([f32; 3], [f32; 3]) {
     let depth = if hat { 4.51 } else { 4.01 };
+    let expand = if hat { 1.125 } else { 1. };
+    let y = (y - 4.) * expand - 4.;
     if face_x < 0.0 {
-        ([-depth, y - 8.0, -4.0 - x], [-1.0, 0.0, 0.0])
+        ([-depth, y, (-4.0 - x) * expand], [-1.0, 0.0, 0.0])
     } else if face_x >= 8.0 {
-        ([depth, y - 8.0, x - 12.0], [1.0, 0.0, 0.0])
+        ([depth, y, (x - 12.0) * expand], [1.0, 0.0, 0.0])
     } else {
-        ([x - 4.0, y - 8.0, -depth], [0.0, 0.0, -1.0])
+        ([(x - 4.0) * expand, y, -depth], [0.0, 0.0, -1.0])
     }
 }
 
 fn draw_eye(canvas: &mut Canvas<'_>, c: &FaceConditions, e: &Eye) {
+    canvas.depth = 0.;
     let engine = canvas.engine;
     let f = canvas.out.frame.clone();
     let s = &engine.settings;
@@ -233,6 +305,9 @@ fn draw_eye(canvas: &mut Canvas<'_>, c: &FaceConditions, e: &Eye) {
     } else {
         f.lids[side]
     };
+    let custom = s
+        .shapes
+        .get(f.shape_names[side].as_deref().unwrap_or(form.name()));
     let hat = e.hat || s.over_hat;
     let lid = s.lid_colors[side].unwrap_or(e.lid);
     let ink = s.line_color.unwrap_or(e.ink);
@@ -249,8 +324,10 @@ fn draw_eye(canvas: &mut Canvas<'_>, c: &FaceConditions, e: &Eye) {
     let top = (y - widen).max(0.0);
     let bottom = (y + h).min(8.0);
     let actual_h = bottom - top;
-    let draw_shape = !matches!(form, FaceForm::Open | FaceForm::Blank);
-    let shape_h = if matches!(
+    let draw_shape = custom.is_some() || !matches!(form, FaceForm::Open | FaceForm::Blank);
+    let shape_h = if let Some(shape) = custom {
+        actual_h.max(shape.minimum_rows() as f32 * 0.5)
+    } else if matches!(
         form,
         FaceForm::Heart | FaceForm::Spiral | FaceForm::Cross | FaceForm::Press
     ) {
@@ -258,7 +335,7 @@ fn draw_eye(canvas: &mut Canvas<'_>, c: &FaceConditions, e: &Eye) {
     } else {
         actual_h.max(1.0)
     };
-    let shape_top = (y + h * 0.5 - shape_h * 0.5).max(0.0);
+    let shape_top = (y + h - shape_h).max(0.0);
     let mut box_top = top.min(shape_top);
     let mut box_bottom = bottom.max(shape_top + shape_h);
     if !draw_shape {
@@ -266,7 +343,7 @@ fn draw_eye(canvas: &mut Canvas<'_>, c: &FaceConditions, e: &Eye) {
         box_bottom = bottom;
     }
     // Erase the old eye before rendering a moved pupil or replacement symbol.
-    canvas.rect(x, box_top, w, box_bottom - box_top, hat, lid, 1.0, None);
+    canvas.backing(x, box_top, w, box_bottom - box_top, hat, lid);
     let white_emission = emissive(canvas.engine, c, side, GLOW_WHITES, e.sclera);
     let pupil_emission = emissive(canvas.engine, c, side, GLOW_PUPILS, e.iris);
     let sparkle_emission = emissive(canvas.engine, c, side, GLOW_SPARKLES, s.sparkle_color);
@@ -284,10 +361,37 @@ fn draw_eye(canvas: &mut Canvas<'_>, c: &FaceConditions, e: &Eye) {
     let left_pupil = e.pupil_col as f32 + shift_x;
     let right_pupil = left_pupil + pupil_width.min(w);
     let white = e.white.is_some();
-    let px0 = (x * scale).floor() as i32;
-    let px1 = ((x + w) * scale).ceil() as i32;
-    let py0 = (box_top * scale).floor() as i32;
-    let py1 = (box_bottom * scale).ceil() as i32;
+    let translating = !white && form == FaceForm::Open && custom.is_none();
+    let scan_left = if translating { x.min(x + shift_x) } else { x };
+    let scan_right = if translating {
+        (x + w).max(x + w + shift_x)
+    } else {
+        x + w
+    };
+    let scan_top = if translating {
+        box_top.min(box_top + shift_y).max(0.)
+    } else {
+        box_top
+    };
+    let scan_bottom = if translating {
+        box_bottom.max(box_bottom + shift_y).min(8.)
+    } else {
+        box_bottom
+    };
+    if translating {
+        canvas.backing(
+            scan_left,
+            scan_top,
+            scan_right - scan_left,
+            scan_bottom - scan_top,
+            hat,
+            lid,
+        );
+    }
+    let px0 = (scan_left * scale).floor() as i32;
+    let px1 = (scan_right * scale).ceil() as i32;
+    let py0 = (scan_top * scale).floor() as i32;
+    let py1 = (scan_bottom * scale).ceil() as i32;
     // Four sub-samples provide fractional lids even on a 64px skin. HD skins
     // retain native pupil detail rather than expanding the downsampled palette.
     for py in py0..py1 {
@@ -299,19 +403,35 @@ fn draw_eye(canvas: &mut Canvas<'_>, c: &FaceConditions, e: &Eye) {
                 for ox in [0.25, 0.75] {
                     let fx = (px as f32 + ox) / scale;
                     let fy = (py as f32 + oy) / scale;
-                    if fx < x || fx >= x + w || fy < box_top || fy >= box_bottom {
+                    if fx < scan_left || fx >= scan_right || fy < scan_top || fy >= scan_bottom {
                         continue;
                     }
                     let u = (fx - x) / w;
                     let v = (fy - shape_top) / shape_h;
                     let mut color = lid;
                     let mut em = None;
+                    let mut depth = 0.020;
                     if draw_shape {
-                        if form == FaceForm::Spiral {
+                        if e.white.is_some()
+                            && (custom.is_some_and(|shape| shape.on_white)
+                                || custom.is_none() && form == FaceForm::Spiral)
+                        {
                             color = e.sclera;
                             em = white_emission;
                         }
-                        if shape_on(form, u, v, side, f.age_ticks, w, shape_h) {
+                        let custom_color = custom.and_then(|shape| {
+                            shape.sample(
+                                u,
+                                v,
+                                side,
+                                (w * 2.).round().max(1.) as usize,
+                                (shape_h * 2.).round().max(1.) as usize,
+                            )
+                        });
+                        if custom_color.is_some()
+                            || custom.is_none()
+                                && shape_on(form, u, v, eye_side(e), f.age_ticks, w, shape_h)
+                        {
                             color = if form == FaceForm::Heart {
                                 let pulse = (f.age_ticks / 10.0).floor() as i32 % 2 == 0;
                                 if pulse {
@@ -322,27 +442,51 @@ fn draw_eye(canvas: &mut Canvas<'_>, c: &FaceConditions, e: &Eye) {
                             } else {
                                 ink
                             };
-                            em = pupil_emission;
+                            if let Some(chosen) = custom_color {
+                                color = if chosen[3] == 0 { ink } else { chosen };
+                            }
+                            let closed = custom.map_or_else(|| form.closed(), |shape| shape.closed);
+                            em = if !closed
+                                && (custom_color.is_some_and(|c| c[3] > 0)
+                                    || custom.is_none() && form == FaceForm::Heart)
+                            {
+                                pupil_emission
+                            } else {
+                                None
+                            };
+                            depth = 0.023;
+                        }
+                        if !custom.map_or_else(|| form.closed(), |shape| shape.closed)
+                            && fy < shape_top + eye_lid * shape_h
+                        {
+                            color = lid;
+                            em = None;
+                            depth = 0.026;
                         }
                     } else {
                         let (upper_mask, lower_mask) = eye_masks(
                             e,
-                            fx - x,
+                            fx - x - if translating { shift_x } else { 0. },
                             actual_h,
                             eye_lid,
                             if s.brows { f.slant } else { 0.0 },
                             f.lower,
                             f.smile,
                         );
-                        let upper = top + upper_mask;
-                        let lower = bottom - lower_mask;
-                        if fy >= upper && fy < lower {
+                        let upper = top + upper_mask + if translating { shift_y } else { 0. };
+                        let lower = bottom - lower_mask + if translating { shift_y } else { 0. };
+                        if fy >= upper
+                            && fy < lower
+                            && (!translating || fx >= x + shift_x && fx < x + w + shift_x)
+                        {
                             if form == FaceForm::Blank {
                                 color = e.sclera;
                                 em = white_emission;
+                                depth = 0.010;
                             } else if white {
                                 color = e.sclera;
                                 em = white_emission;
+                                depth = 0.010;
                                 if fx >= left_pupil
                                     && fx < right_pupil
                                     && fy >= y + shift_y
@@ -358,6 +502,7 @@ fn draw_eye(canvas: &mut Canvas<'_>, c: &FaceConditions, e: &Eye) {
                                     };
                                     color[3] = 255;
                                     em = pupil_emission;
+                                    depth = 0.012;
                                 }
                             } else {
                                 let sx = (fx - shift_x).clamp(x, x + w - 0.001);
@@ -365,6 +510,7 @@ fn draw_eye(canvas: &mut Canvas<'_>, c: &FaceConditions, e: &Eye) {
                                 color = canvas.original(sx, sy, e.hat);
                                 color[3] = 255;
                                 em = pupil_emission;
+                                depth = 0.012;
                             }
                             // Retain skin-authored glints in the iris, or add selected
                             // procedural sparkle on the upper outer pupil corner.
@@ -384,16 +530,32 @@ fn draw_eye(canvas: &mut Canvas<'_>, c: &FaceConditions, e: &Eye) {
                             {
                                 color = s.sparkle_color;
                                 em = sparkle_emission;
+                                depth = 0.013;
                             }
                             if s.sparkle == "skin" {
                                 let glint = canvas.original(fx - shift_x, fy - shift_y, true);
                                 if glint[3] >= 128 && luminance(glint) > luminance(color) + 48.0 {
                                     color = glint;
                                     em = sparkle_emission;
+                                    depth = 0.013;
                                 }
                             }
                         }
                     }
+                    canvas.depth = depth;
+                    let d = 0.25 / scale;
+                    canvas.piece(
+                        [
+                            (fx - d).max(scan_left),
+                            (fy - d).max(scan_top),
+                            (fx + d).min(scan_right),
+                            (fy + d).min(scan_bottom),
+                        ],
+                        hat,
+                        color,
+                        1.,
+                        em,
+                    );
                     for k in 0..4 {
                         sums[k] += color[k] as f32;
                     }
@@ -418,8 +580,8 @@ fn draw_eye(canvas: &mut Canvas<'_>, c: &FaceConditions, e: &Eye) {
             }
         }
     }
-    // If a base-layer eye had a hat-layer glint, a closed/special eye must hide
-    // that glint too; otherwise a white dot shines through a shut eyelid.
+    // Hat glints follow their iris, while opaque hair/accessories keep their
+    // original occlusion. Remove only the detected glint from the static atlas.
     if !e.hat && s.hat_layer {
         for row in e.row..e.row + e.height {
             for col in e.col..e.col + e.width {
@@ -434,18 +596,50 @@ fn draw_eye(canvas: &mut Canvas<'_>, c: &FaceConditions, e: &Eye) {
                 if hat_pixel[3] >= 128
                     && luminance(hat_pixel) >= 140.0
                     && luminance(hat_pixel) - luminance(base) >= 60.0
-                    && (draw_shape || eye_lid > 0.5)
                 {
-                    canvas.rect(
-                        col as f32,
-                        row as f32,
-                        1.0,
-                        1.0,
-                        true,
-                        lid,
-                        eye_lid.max(if draw_shape { 1.0 } else { 0.0 }),
-                        None,
-                    );
+                    let scale = engine.grid.scale;
+                    for dy in 0..scale {
+                        for dx in 0..scale {
+                            let i = (((8 + row as usize) * scale + dy) * engine.width as usize
+                                + (40 + col) as usize * scale
+                                + dx)
+                                * 4;
+                            canvas.out.geometry_skin[i..i + 4].fill(0);
+                            canvas.out.rgba[i..i + 4].fill(0);
+                        }
+                    }
+                    if !draw_shape && form != FaceForm::Blank {
+                        let gx = col as f32 + shift_x;
+                        let gy = row as f32 + shift_y;
+                        let (upper, lower) = eye_masks(
+                            e,
+                            gx - x,
+                            actual_h,
+                            eye_lid,
+                            if s.brows { f.slant } else { 0. },
+                            f.lower,
+                            f.smile,
+                        );
+                        let left = gx.max(if translating { x + shift_x } else { x });
+                        let right =
+                            (gx + 1.).min(if translating { x + w + shift_x } else { x + w });
+                        let upper = gy.max(top + upper + if translating { shift_y } else { 0. });
+                        let lower =
+                            (gy + 1.).min(bottom - lower + if translating { shift_y } else { 0. });
+                        if right > left && lower > upper {
+                            canvas.depth = 0.013;
+                            canvas.rect(
+                                left,
+                                upper,
+                                right - left,
+                                lower - upper,
+                                true,
+                                hat_pixel,
+                                1.,
+                                sparkle_emission,
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -557,56 +751,166 @@ fn shape_on(
     if !(0.0..1.0).contains(&u) || !(0.0..1.0).contains(&v) {
         return false;
     }
-    let u = if side == 1 { 1.0 - u } else { u };
-    let line = (0.16 / height.max(1.0)).max(0.07);
+    // Symbols are cells on the half-texel grid. Analytical smooth curves
+    // disappear on short eyes and have different silhouette/phase semantics.
+    let cols = (width * 2.).round().max(1.) as i32;
+    let rows = (height * 2.).round().max(1.) as i32;
+    let x = (u * cols as f32).floor() as i32;
+    let x = if side == 1 { cols - 1 - x } else { x };
+    let y = (v * rows as f32).floor() as i32;
     match form {
-        FaceForm::Line => (v - 0.5).abs() < line,
-        FaceForm::Arc => {
-            let target = 0.25 + 0.5 * (2.0 * u - 1.0).abs();
-            (v - target).abs() < line
-        }
-        FaceForm::Cup => {
-            let target = 0.75 - 0.5 * (2.0 * u - 1.0).abs();
-            (v - target).abs() < line
+        FaceForm::Line => y == rows / 2,
+        FaceForm::Arc | FaceForm::Cup => {
+            if cols < 4 {
+                return y
+                    == if form == FaceForm::Cup {
+                        rows - 1
+                    } else {
+                        (rows / 2 - 1).max(0)
+                    };
+            }
+            let levels = if cols >= 6 && rows >= 3 { 3 } else { 2 };
+            let row = y - (rows - levels) / 2;
+            let row = if form == FaceForm::Cup {
+                levels - 1 - row
+            } else {
+                row
+            };
+            if row < 0 || row >= levels {
+                return false;
+            }
+            let inset = levels - 1 - row;
+            if row == 0 {
+                x >= inset && x < cols - inset
+            } else {
+                x == inset || x == cols - 1 - inset
+            }
         }
         FaceForm::Press => {
-            (u - (0.7 - (v - 0.5).abs() * 1.3)).abs() < (0.2 / width.max(1.0)).max(0.09)
+            let row = y - (rows - 3) / 2;
+            if !(0..3).contains(&row) {
+                return false;
+            }
+            let (x, cols) = if side == 2 {
+                (x.min(cols - 1 - x), (cols / 2).max(1))
+            } else {
+                (x, cols)
+            };
+            let half = (cols / 2).max(1);
+            if row == 1 { x >= cols - half } else { x < half }
         }
-        FaceForm::Cross => (u - v).abs() < line || (u + v - 1.0).abs() < line,
+        FaceForm::Cross => {
+            let Some((w, h)) = [(8, 8), (6, 6), (4, 4), (4, 3)]
+                .into_iter()
+                .find(|&(w, h)| w <= cols && h <= rows)
+            else {
+                return y == rows / 2;
+            };
+            let x = x - (cols - w) / 2;
+            let y = y - (rows - h) / 2;
+            if x < 0 || x >= w || y < 0 || y >= h {
+                return false;
+            }
+            let inset = y.min(h - 1 - y);
+            let thickness = if w == 8 { 2 } else { 1 };
+            (inset..inset + thickness).contains(&x)
+                || (w - inset - thickness..w - inset).contains(&x)
+        }
         FaceForm::Heart => {
-            // Implicit cardioid-style silhouette, scaled to the eye box.
-            let x = (u - 0.5) * 2.2;
-            let y = (0.5 - v) * 2.2;
-            let a = x * x + y * y - 0.5;
-            a * a * a - x * x * y * y * y <= 0.0
+            let Some((w, h)) = [
+                (8, 6),
+                (8, 5),
+                (8, 4),
+                (6, 5),
+                (6, 4),
+                (6, 3),
+                (4, 4),
+                (4, 3),
+            ]
+            .into_iter()
+            .find(|&(w, h)| w <= cols && h <= rows) else {
+                return y >= (rows - 2).max(0);
+            };
+            let x = x - (cols - w) / 2;
+            let y = y - (rows - h) / 2;
+            if x < 0 || x >= w || y < 0 || y >= h {
+                return false;
+            }
+            if y == 0 {
+                return match w {
+                    8 => (1..3).contains(&x) || (5..7).contains(&x),
+                    6 => !(2..4).contains(&x),
+                    _ => x == 0 || x == 3,
+                };
+            }
+            let tail = if w == 8 && h == 6 {
+                3
+            } else if w >= 6 {
+                2
+            } else {
+                1
+            };
+            let inset = if y < h - tail { 0 } else { w / 2 - (h - y) };
+            x >= inset && x < w - inset
         }
         FaceForm::Spiral => {
-            let x = (u - 0.5) * 2.0;
-            let y = (v - 0.5) * 2.0;
-            let r = (x * x + y * y).sqrt();
-            let phase = (y.atan2(x) - r * 9.0 + age / 1.5).rem_euclid(std::f32::consts::TAU);
-            r < 1.2 && (phase < 1.2 || r < 0.2)
+            let count = if cols == 1 {
+                rows
+            } else if rows == 1 {
+                cols
+            } else {
+                2 * (cols + rows) - 4
+            };
+            let start = (age / 1.5).floor() as i32;
+            let index = if rows == 1 {
+                Some(x)
+            } else if cols == 1 {
+                Some(y)
+            } else if y == 0 {
+                Some(x)
+            } else if x == cols - 1 {
+                Some(cols + y - 1)
+            } else if y == rows - 1 {
+                Some(2 * cols + rows - 3 - x)
+            } else if x == 0 {
+                Some(count - y)
+            } else {
+                None
+            };
+            if let Some(index) = index
+                && (index - start).rem_euclid(count) >= (count / 3).max(1)
+            {
+                return true;
+            }
+            if cols >= 4 && rows >= 4 {
+                let index = (start - 1).rem_euclid(count);
+                let p = if index < cols {
+                    (index, 0)
+                } else if index < cols + rows - 1 {
+                    (cols - 1, index - cols + 1)
+                } else if index < 2 * cols + rows - 2 {
+                    (2 * cols + rows - 3 - index, rows - 1)
+                } else {
+                    (0, count - index)
+                };
+                (x, y) == (p.0.clamp(1, cols - 2), p.1.clamp(1, rows - 2))
+            } else {
+                false
+            }
         }
         _ => false,
     }
 }
 fn draw_brow(canvas: &mut Canvas<'_>, c: &FaceConditions, b: &Brow) {
+    canvas.depth = 0.;
     let engine = canvas.engine;
     let f = canvas.out.frame.clone();
     let s = &engine.settings;
     let hat = b.hat || s.over_hat;
     let ink = s.line_color.unwrap_or(b.color);
-    canvas.rect(
-        b.col as f32,
-        b.row as f32,
-        b.width as f32,
-        1.0,
-        hat,
-        b.skin,
-        1.0,
-        None,
-    );
+    canvas.backing(b.col as f32, b.row as f32, b.width as f32, 1.0, hat, b.skin);
     let emission = emissive(canvas.engine, c, b.side, GLOW_BROWS, ink);
+    canvas.depth = 0.019;
     let rise = f.brows[b.side] * 0.8;
     for i in 0..b.width {
         let t = if b.width > 1 {
@@ -620,6 +924,7 @@ fn draw_brow(canvas: &mut Canvas<'_>, c: &FaceConditions, b: &Brow) {
     }
 }
 fn draw_marks(canvas: &mut Canvas<'_>) {
+    canvas.depth = 0.006;
     let f = canvas.out.frame.clone();
     let engine = canvas.engine;
     let settings = &engine.settings;
@@ -795,5 +1100,71 @@ mod tests {
         assert_eq!(snap_half(0.25), 0.5);
         assert_eq!(settled(0.14), 0.0);
         assert_eq!(settled(0.15), 0.15);
+    }
+    #[test]
+    fn eyes_without_whites_can_move_outside_their_original_box() {
+        let mut engine = marked_engine();
+        engine.settings.brows = false;
+        engine.settings.sparkle = "off".into();
+        engine.rig.eyes.truncate(1);
+        engine.rig.eyes[0].white = None;
+        let eye = &engine.rig.eyes[0];
+        let x = (8 + eye.col + eye.width) as usize;
+        let y = (8 + eye.row) as usize;
+        let i = (y * 64 + x) * 4;
+        let original = engine.original_rgba()[i..i + 4].to_vec();
+        let conditions = FaceConditions::default();
+        let mut output = engine.render(&conditions);
+        output.rgba = engine.original_rgba().to_vec();
+        output.overlay.fill(0);
+        output.frame = super::super::FaceFrame {
+            pupil: [0.5, 0.],
+            ..Default::default()
+        };
+        draw(&engine, &conditions, &mut output);
+        assert_ne!(&output.rgba[i..i + 4], original.as_slice());
+    }
+    #[test]
+    fn face_mesh_has_outward_winding_and_keeps_animation_out_of_backing_skin() {
+        let mut engine = marked_engine();
+        let output = engine.render(&FaceConditions {
+            quads: true,
+            ..Default::default()
+        });
+        assert!(!output.quads.is_empty());
+        for q in &output.quads {
+            let p = q.positions.map(glam::Vec3::from_array);
+            assert!(
+                (p[1] - p[0])
+                    .cross(p[2] - p[0])
+                    .dot(glam::Vec3::from_array(q.normal))
+                    > 0.
+            );
+        }
+        assert_ne!(output.geometry_skin, output.rgba);
+        assert_eq!(
+            &output.geometry_skin[16 * 64 * 4..],
+            &engine.original_rgba()[16 * 64 * 4..]
+        );
+    }
+    #[test]
+    fn closing_a_colored_shape_removes_pupil_glow_but_keeps_a_fading_anchor() {
+        let mut engine = marked_engine();
+        engine.settings.lights[0].parts = GLOW_PUPILS;
+        engine.rig.eyes.truncate(1);
+        let conditions = FaceConditions {
+            quads: true,
+            ..Default::default()
+        };
+        let mut output = engine.render(&conditions);
+        output.quads.clear();
+        output.emission.fill(0);
+        output.glow_anchors.clear();
+        output.frame.forms = [FaceForm::Heart; 2];
+        output.frame.lids = [1.; 2];
+        draw(&engine, &conditions, &mut output);
+        assert!(output.quads.iter().all(|q| q.emission[3] == 0));
+        assert_eq!(output.glow_anchors.len(), 1);
+        assert_eq!(output.glow_anchors[0].strength, 0.);
     }
 }
